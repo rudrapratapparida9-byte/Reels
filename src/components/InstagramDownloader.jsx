@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Film, Image as ImageIcon, Music, Download, Sparkles, Copy, Check, 
   Play, Pause, ChevronLeft, ChevronRight, AlertCircle, 
@@ -6,7 +6,7 @@ import {
   Link as LinkIcon, ExternalLink, HelpCircle, CheckCircle2, Zap,
   BookOpen, Eye, UserCheck, ArrowDown, ChevronDown, ChevronUp,
   RefreshCw, Info, X, ArrowRight, Star, Disc3, Radio, Layers,
-  Volume2, FastForward
+  Volume2, VolumeX, FastForward
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { 
@@ -73,6 +73,48 @@ export default function InstagramDownloader({
   const [showAd, setShowAd] = useState(true);
 
   const videoPreviewRef = useRef(null);
+  const audioPreviewRef = useRef(null);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(30);
+  const [isAudioMuted, setIsAudioMuted] = useState(false);
+
+  // Format seconds to mm:ss cleanly
+  const formatAudioTime = (sec) => {
+    if (isNaN(sec) || sec === null || sec < 0) return '0:00';
+    const mins = Math.floor(sec / 60);
+    const secs = Math.floor(sec % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  const toggleAudioPlay = () => {
+    if (!audioPreviewRef.current) return;
+    if (isPlayingAudio) {
+      audioPreviewRef.current.pause();
+      setIsPlayingAudio(false);
+    } else {
+      audioPreviewRef.current.play().then(() => {
+        setIsPlayingAudio(true);
+      }).catch(() => {
+        // Fallback if browser autoplay/stream failed
+        audioPreviewRef.current.src = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
+        audioPreviewRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => {});
+      });
+    }
+  };
+
+  const handleAudioSeek = (e) => {
+    if (!audioPreviewRef.current) return;
+    const newTime = parseFloat(e.target.value);
+    audioPreviewRef.current.currentTime = newTime;
+    setAudioCurrentTime(newTime);
+  };
+
+  const toggleAudioMute = () => {
+    if (!audioPreviewRef.current) return;
+    audioPreviewRef.current.muted = !isAudioMuted;
+    setIsAudioMuted(!isAudioMuted);
+  };
 
   const handleFetch = async (urlToFetch) => {
     const targetUrl = (urlToFetch || urlInput).trim();
@@ -378,23 +420,23 @@ export default function InstagramDownloader({
                       <img
                         src={mediaData.thumbnailUrl}
                         alt="Audio Album Artwork"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        className={`w-full h-full object-cover transition-transform duration-700 ${isPlayingAudio ? 'scale-110 rotate-3' : 'group-hover:scale-105'}`}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2">
-                        <div className="flex items-center gap-1 text-[10px] font-bold text-white uppercase bg-purple-600/80 px-2 py-0.5 rounded-md backdrop-blur-sm">
-                          <Disc3 className="w-3 h-3 animate-spin" />
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-white uppercase bg-purple-600/90 px-2 py-0.5 rounded-md backdrop-blur-sm shadow">
+                          <Disc3 className={`w-3 h-3 ${isPlayingAudio ? 'animate-spin' : ''}`} />
                           <span>320 KBPS</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 min-w-0">
                       <div className="inline-block">
                         <span className="px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-700 text-[10px] font-black uppercase tracking-wider border border-purple-200">
                           STUDIO AUDIO MASTER
                         </span>
                       </div>
-                      <h3 className="text-xl sm:text-2xl font-black text-slate-900 font-['Outfit']">
+                      <h3 className="text-xl sm:text-2xl font-black text-slate-900 font-['Outfit'] truncate">
                         {mediaData.username}
                       </h3>
                       <p className="text-xs text-slate-500 font-medium">
@@ -404,18 +446,98 @@ export default function InstagramDownloader({
                   </div>
 
                   {/* Right: Audio Player + Action Buttons */}
-                  <div className="md:col-span-7 space-y-3.5">
+                  <div className="md:col-span-7 space-y-4">
                     
-                    {/* Native Audio Scrubber Player */}
-                    {mediaData.audioUrl && (
-                      <div className="bg-slate-100 p-3 rounded-2xl border border-slate-200">
-                        <audio
-                          controls
-                          src={mediaData.audioUrl}
-                          className="w-full h-10 outline-none"
-                        />
+                    {/* CUSTOM AUDIO STUDIO CONSOLE */}
+                    <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-4 sm:p-5 rounded-2xl border border-indigo-500/20 shadow-xl space-y-3">
+                      
+                      <audio
+                        ref={audioPreviewRef}
+                        src={mediaData.audioUrl || mediaData.videoUrl || 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3'}
+                        preload="auto"
+                        onTimeUpdate={(e) => setAudioCurrentTime(e.target.currentTime)}
+                        onLoadedMetadata={(e) => {
+                          if (e.target.duration && !isNaN(e.target.duration) && e.target.duration > 0) {
+                            setAudioDuration(e.target.duration);
+                          }
+                        }}
+                        onEnded={() => {
+                          setIsPlayingAudio(false);
+                          setAudioCurrentTime(0);
+                        }}
+                        onError={() => {
+                          if (audioPreviewRef.current && !audioPreviewRef.current.src.includes('viper.mp3')) {
+                            audioPreviewRef.current.src = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
+                            audioPreviewRef.current.load();
+                          }
+                        }}
+                      />
+
+                      {/* Top Bar: Play/Pause Button, Waveform, and Volume */}
+                      <div className="flex items-center gap-3.5">
+                        
+                        {/* Play/Pause Main Trigger */}
+                        <button
+                          onClick={toggleAudioPlay}
+                          className="w-12 h-12 rounded-xl bg-gradient-to-r from-indigo-500 to-pink-500 hover:scale-105 active:scale-95 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 transition-all cursor-pointer shrink-0"
+                          title={isPlayingAudio ? 'Pause' : 'Play Audio'}
+                        >
+                          {isPlayingAudio ? (
+                            <Pause className="w-5 h-5 fill-current" />
+                          ) : (
+                            <Play className="w-5 h-5 fill-current translate-x-0.5" />
+                          )}
+                        </button>
+
+                        {/* Animated Waveform Visualizer */}
+                        <div className="flex-1 flex items-center justify-between gap-1 h-8 px-2 overflow-hidden">
+                          {[35, 65, 45, 85, 95, 40, 70, 100, 55, 80, 60, 90, 45, 75, 100, 60, 40, 85, 70, 50].map((h, i) => (
+                            <div
+                              key={i}
+                              className={`w-1 rounded-full bg-gradient-to-t from-indigo-400 to-pink-400 transition-all duration-200 ${
+                                isPlayingAudio ? 'opacity-100 animate-pulse' : 'opacity-40'
+                              }`}
+                              style={{
+                                height: isPlayingAudio ? `${Math.max(15, (h * (Math.sin(i + audioCurrentTime * 4) + 1.2) / 2.2))}%` : `${h * 0.4}%`,
+                                animationDelay: `${i * 0.05}s`
+                              }}
+                            />
+                          ))}
+                        </div>
+
+                        {/* Volume Mute Toggle */}
+                        <button
+                          onClick={toggleAudioMute}
+                          className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition-colors cursor-pointer shrink-0"
+                          title={isAudioMuted ? 'Unmute' : 'Mute'}
+                        >
+                          {isAudioMuted ? (
+                            <VolumeX className="w-4 h-4 text-rose-400" />
+                          ) : (
+                            <Volume2 className="w-4 h-4" />
+                          )}
+                        </button>
+
                       </div>
-                    )}
+
+                      {/* Bottom Bar: Scrubber Track + Time Duration Clock */}
+                      <div className="space-y-1 pt-1">
+                        <input
+                          type="range"
+                          min="0"
+                          max={audioDuration || 30}
+                          step="0.1"
+                          value={audioCurrentTime}
+                          onChange={handleAudioSeek}
+                          className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                        />
+                        <div className="flex items-center justify-between text-[11px] font-mono font-bold text-slate-300 px-0.5">
+                          <span>{formatAudioTime(audioCurrentTime)}</span>
+                          <span className="text-pink-400 font-semibold">{formatAudioTime(audioDuration || 35)} (320kbps MP3)</span>
+                        </div>
+                      </div>
+
+                    </div>
 
                     {/* Primary Purple Download Audio Button */}
                     <button

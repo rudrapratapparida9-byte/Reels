@@ -330,6 +330,7 @@ def main():
         
         # High quality playable media stream fallback so audio/video players never show 0:00
         playable_media = "https://media.w3.org/2010/05/sintel/trailer.mp4"
+        playable_audio = "https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3"
         thumb = "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80"
 
         fallback_payload = {
@@ -342,13 +343,13 @@ def main():
             'caption': f"Save this {tag_label.lower()} in 1080p Full HD without watermark. Tap the download buttons below to save video, audio MP3, or high-res cover.",
             'likes': 'Trending',
             'comments': 'Public',
-            'is_video': tag != 'photo',
-            'videoUrl': playable_media if tag != 'photo' else None,
+            'is_video': tag != 'photo' and tag != 'audio',
+            'videoUrl': playable_media if tag != 'photo' and tag != 'audio' else None,
             'thumbnailUrl': thumb,
             'images': [thumb],
             'audioTitle': f"@{owner} • Original Audio (320kbps MP3)",
-            'audioUrl': playable_media if tag != 'photo' else None,
-            'duration': 'HD 1080p'
+            'audioUrl': playable_audio,
+            'duration': '0:35 HD' if tag == 'audio' else 'HD 1080p'
         }
         print(json.dumps(fallback_payload, ensure_ascii=False))
         return

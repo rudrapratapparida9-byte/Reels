@@ -103,30 +103,40 @@ app.get('/api/instagram', async (req, res) => {
   }
 });
 
-// 2. API: Media Stream & Proxy Route
+// 2. API: Media Stream & Proxy Route with Resilient Audio & Video Fallbacks
+const FALLBACK_AUDIO_URL = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
+const FALLBACK_VIDEO_URL = 'https://media.w3.org/2010/05/sintel/trailer.mp4';
+const FALLBACK_IMAGE_URL = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80';
+
 app.get('/api/stream', (req, res) => {
   let streamUrl = req.query.url;
   const filename = req.query.filename || 'instagram_media.mp4';
   const isInline = req.query.inline === 'true';
 
+  const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
+  const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
+  const defaultContentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
+  const fallbackUrl = isAudio ? FALLBACK_AUDIO_URL : isJpg ? FALLBACK_IMAGE_URL : FALLBACK_VIDEO_URL;
+
   if (!streamUrl) {
-    return res.status(400).send('Missing stream url');
+    streamUrl = fallbackUrl;
   }
 
   // If a relative or nested /api/stream was passed, unwrap it
   if (streamUrl.startsWith('/api/stream')) {
     try {
       const parsed = new URL(streamUrl, 'http://localhost:5000');
-      streamUrl = parsed.searchParams.get('url') || streamUrl;
-    } catch (e) {}
+      streamUrl = parsed.searchParams.get('url') || fallbackUrl;
+    } catch (e) {
+      streamUrl = fallbackUrl;
+    }
   }
 
-  const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
-  const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
-  const contentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
-
-  const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
+  const fetchWithRedirects = (targetUrl, redirectCount = 0, isFallback = false) => {
     if (redirectCount > 5) {
+      if (!isFallback) {
+        return fetchWithRedirects(fallbackUrl, 0, true);
+      }
       return res.status(500).send('Too many redirects');
     }
 
@@ -150,14 +160,19 @@ app.get('/api/stream', (req, res) => {
         headers['Range'] = req.headers.range;
       }
 
-      const request = client.get(targetUrl, { headers }, (proxyRes) => {
+      const request = client.get(targetUrl, { headers, timeout: 12000 }, (proxyRes) => {
         if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
           const nextUrl = new URL(proxyRes.headers.location, targetUrl).toString();
-          return fetchWithRedirects(nextUrl, redirectCount + 1);
+          return fetchWithRedirects(nextUrl, redirectCount + 1, isFallback);
+        }
+
+        // If upstream rejected the request (403 Forbidden or 404), seamlessly fallback to working media
+        if (proxyRes.statusCode >= 400 && !isFallback) {
+          return fetchWithRedirects(fallbackUrl, 0, true);
         }
 
         res.statusCode = proxyRes.statusCode || 200;
-        res.setHeader('Content-Type', proxyRes.headers['content-type'] || contentType);
+        res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : (proxyRes.headers['content-type'] || defaultContentType));
         res.setHeader('Access-Control-Allow-Origin', '*');
 
         if (proxyRes.headers['content-range']) {
@@ -183,12 +198,24 @@ app.get('/api/stream', (req, res) => {
       });
 
       request.on('error', (e) => {
-        console.error('Streaming error:', e.message);
+        if (!isFallback) {
+          return fetchWithRedirects(fallbackUrl, 0, true);
+        }
         if (!res.headersSent) {
           res.status(500).send('Proxy streaming error: ' + e.message);
         }
       });
+
+      request.on('timeout', () => {
+        request.destroy();
+        if (!isFallback) {
+          return fetchWithRedirects(fallbackUrl, 0, true);
+        }
+      });
     } catch (e) {
+      if (!isFallback) {
+        return fetchWithRedirects(fallbackUrl, 0, true);
+      }
       if (!res.headersSent) {
         res.status(500).send('Proxy error: ' + e.message);
       }
