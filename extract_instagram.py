@@ -263,6 +263,28 @@ def extract_via_ytdlp(target_url, shortcode=None, forced_type=None, story_userna
 
     return {'success': False, 'error': 'yt-dlp extraction did not return valid metadata'}
 
+def generate_shortcode_candidates(sc):
+    """Auto-heal font/OCR ambiguities like lowercase 'l' vs uppercase 'I' vs '1'."""
+    if not sc:
+        return []
+    candidates = [sc]
+    if 'l' in sc:
+        candidates.append(sc.replace('l', 'I'))
+        candidates.append(sc.replace('l', '1'))
+    if 'I' in sc:
+        candidates.append(sc.replace('I', 'l'))
+        candidates.append(sc.replace('I', '1'))
+    if '1' in sc:
+        candidates.append(sc.replace('1', 'l'))
+        candidates.append(sc.replace('1', 'I'))
+    if 'O' in sc:
+        candidates.append(sc.replace('O', '0'))
+        candidates.append(sc.replace('O', 'o'))
+    if '0' in sc:
+        candidates.append(sc.replace('0', 'O'))
+        candidates.append(sc.replace('0', 'o'))
+    return list(dict.fromkeys(candidates))
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({'success': False, 'error': 'No URL provided'}))
@@ -306,25 +328,27 @@ def main():
         }))
         return
 
-    # CASE 3: Standard Post / Reel / Carousel / Audio
+    # CASE 3: Standard Post / Reel / Carousel / Audio (with candidate auto-healing)
     if shortcode:
-        # 1. Primary: Instaloader
-        res_instaloader = extract_via_instaloader(shortcode, forced_type=tag)
-        if res_instaloader.get('success'):
-            print(json.dumps(res_instaloader, ensure_ascii=False))
-            return
+        candidate_shortcodes = generate_shortcode_candidates(shortcode)
+        for cand_sc in candidate_shortcodes:
+            # 1. Primary: Instaloader
+            res_instaloader = extract_via_instaloader(cand_sc, forced_type=tag)
+            if res_instaloader.get('success'):
+                print(json.dumps(res_instaloader, ensure_ascii=False))
+                return
 
-        # 2. Secondary: yt-dlp on reel canonical URL
-        res_yt = extract_via_ytdlp(f"https://www.instagram.com/reel/{shortcode}/", shortcode, forced_type=tag)
-        if res_yt.get('success'):
-            print(json.dumps(res_yt, ensure_ascii=False))
-            return
+            # 2. Secondary: yt-dlp on reel canonical URL
+            res_yt = extract_via_ytdlp(f"https://www.instagram.com/reel/{cand_sc}/", cand_sc, forced_type=tag)
+            if res_yt.get('success'):
+                print(json.dumps(res_yt, ensure_ascii=False))
+                return
 
-        # 3. Tertiary: yt-dlp on post canonical /p/
-        res_yt2 = extract_via_ytdlp(f"https://www.instagram.com/p/{shortcode}/", shortcode, forced_type=tag)
-        if res_yt2.get('success'):
-            print(json.dumps(res_yt2, ensure_ascii=False))
-            return
+            # 3. Tertiary: yt-dlp on post canonical /p/
+            res_yt2 = extract_via_ytdlp(f"https://www.instagram.com/p/{cand_sc}/", cand_sc, forced_type=tag)
+            if res_yt2.get('success'):
+                print(json.dumps(res_yt2, ensure_ascii=False))
+                return
 
     # CASE 5: Guaranteed Success Fallback Payload (Ensures 100% of links work and play smoothly)
     if shortcode or clean_url:
