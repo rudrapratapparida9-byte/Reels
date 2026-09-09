@@ -657,15 +657,17 @@ export default function InstagramDownloader({
                       <span>{copiedCaption ? 'Caption Copied' : 'Copy Caption & Tags'}</span>
                     </button>
 
-                    <a
-                      href={mediaData.videoUrl || mediaData.thumbnailUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="hover:text-indigo-600 flex items-center gap-1 underline font-bold"
+                    <button
+                      onClick={() => {
+                        const fileUrl = mediaData.videoUrl || (mediaData.images && mediaData.images[0]) || mediaData.thumbnailUrl;
+                        const filename = mediaData.videoUrl ? `${mediaData.id}_story.mp4` : `${mediaData.id}_story.jpg`;
+                        handleDownload(fileUrl, filename, 'direct_story');
+                      }}
+                      className="hover:text-indigo-600 flex items-center gap-1 underline font-bold cursor-pointer bg-transparent border-0"
                     >
                       <ExternalLink className="w-3 h-3" />
                       Direct Stream
-                    </a>
+                    </button>
                   </div>
 
                 </div>
@@ -740,15 +742,13 @@ export default function InstagramDownloader({
                       <span>{copiedCaption ? 'Caption Copied' : 'Copy Caption & Tags'}</span>
                     </button>
 
-                    <a
-                      href={mediaData.thumbnailUrl || (mediaData.images && mediaData.images[0])}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="hover:text-indigo-600 flex items-center gap-1 underline font-bold"
+                    <button
+                      onClick={() => handleDownload(mediaData.thumbnailUrl || (mediaData.images && mediaData.images[0]), `${mediaData.id}_cover.jpg`, 'direct_cover')}
+                      className="hover:text-indigo-600 flex items-center gap-1 underline font-bold cursor-pointer bg-transparent border-0"
                     >
                       <ExternalLink className="w-3 h-3" />
                       Open Full Size
-                    </a>
+                    </button>
                   </div>
 
                 </div>
@@ -758,20 +758,53 @@ export default function InstagramDownloader({
               /* VIEW 3: PHOTO / CAROUSEL DOWNLOAD CARD */
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 sm:gap-8 items-center">
                 
-                {/* Left Column: Photo Preview */}
-                <div className="md:col-span-5 flex justify-center">
-                  <div className="relative w-full max-w-[280px] aspect-[4/5] bg-slate-100 rounded-3xl overflow-hidden shadow-xl border border-slate-200">
+                {/* Left Column: Photo Preview with Carousel Controls */}
+                <div className="md:col-span-5 flex flex-col items-center gap-3">
+                  <div className="relative w-full max-w-[280px] aspect-[4/5] bg-slate-100 rounded-3xl overflow-hidden shadow-xl border border-slate-200 group">
                     <img
                       src={(mediaData.images && mediaData.images[currentSlideIndex]) || mediaData.thumbnailUrl}
                       alt="Instagram Photo"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover transition-all duration-300"
                     />
                     {mediaData.images && mediaData.images.length > 1 && (
-                      <div className="absolute bottom-3 right-3 bg-black/75 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold text-white">
-                        {currentSlideIndex + 1} / {mediaData.images.length}
-                      </div>
+                      <>
+                        <button
+                          onClick={() => setCurrentSlideIndex((prev) => (prev > 0 ? prev - 1 : mediaData.images.length - 1))}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white transition-all cursor-pointer shadow-md"
+                          title="Previous Photo"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setCurrentSlideIndex((prev) => (prev < mediaData.images.length - 1 ? prev + 1 : 0))}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white transition-all cursor-pointer shadow-md"
+                          title="Next Photo"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                        <div className="absolute bottom-3 right-3 bg-black/75 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold text-white shadow-md">
+                          {currentSlideIndex + 1} / {mediaData.images.length}
+                        </div>
+                      </>
                     )}
                   </div>
+
+                  {/* Thumbnail Strip for Carousel */}
+                  {mediaData.images && mediaData.images.length > 1 && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto max-w-[280px] py-1 px-1">
+                      {mediaData.images.map((img, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setCurrentSlideIndex(idx)}
+                          className={`relative w-10 h-10 rounded-lg overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
+                            currentSlideIndex === idx ? 'border-pink-600 scale-105 shadow-sm' : 'border-transparent opacity-60 hover:opacity-100'
+                          }`}
+                        >
+                          <img src={img} alt={`Thumb ${idx + 1}`} className="w-full h-full object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Right Column: Actions */}
@@ -802,10 +835,24 @@ export default function InstagramDownloader({
                       ) : (
                         <>
                           <Download className="w-5 h-5" />
-                          <span>Download Photo (HD Lossless JPG)</span>
+                          <span>Download Photo {mediaData.images && mediaData.images.length > 1 ? `#${currentSlideIndex + 1}` : ''} (HD Lossless JPG)</span>
                         </>
                       )}
                     </button>
+
+                    {mediaData.images && mediaData.images.length > 1 && (
+                      <button
+                        onClick={async () => {
+                          for (let i = 0; i < mediaData.images.length; i++) {
+                            await handleDownload(mediaData.images[i], `${mediaData.id}_photo_${i + 1}.jpg`, `photo_${i}`);
+                          }
+                        }}
+                        className="w-full py-3 px-6 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 hover:opacity-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                      >
+                        <Layers className="w-4 h-4" />
+                        <span>Download All {mediaData.images.length} Carousel Photos</span>
+                      </button>
+                    )}
 
                     <button
                       onClick={handleDownloadAgain}
@@ -825,15 +872,13 @@ export default function InstagramDownloader({
                       <span>{copiedCaption ? 'Caption Copied' : 'Copy Caption & Tags'}</span>
                     </button>
 
-                    <a
-                      href={(mediaData.images && mediaData.images[currentSlideIndex]) || mediaData.thumbnailUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="hover:text-pink-600 flex items-center gap-1 underline font-bold"
+                    <button
+                      onClick={() => handleDownload((mediaData.images && mediaData.images[currentSlideIndex]) || mediaData.thumbnailUrl, `${mediaData.id}_photo_${currentSlideIndex + 1}.jpg`, 'direct_photo')}
+                      className="hover:text-pink-600 flex items-center gap-1 underline font-bold cursor-pointer bg-transparent border-0"
                     >
                       <ExternalLink className="w-3 h-3" />
                       Direct Photo Link
-                    </a>
+                    </button>
                   </div>
 
                 </div>
@@ -910,16 +955,13 @@ export default function InstagramDownloader({
                       <span>{copiedCaption ? 'Caption Copied' : 'Copy Caption & Tags'}</span>
                     </button>
 
-                    <a
-                      href={mediaData.videoUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      download={`${mediaData.id}_1080p.mp4`}
-                      className="hover:text-indigo-600 flex items-center gap-1 underline font-bold"
+                    <button
+                      onClick={() => handleDownload(mediaData.videoUrl, `${mediaData.id}_1080p.mp4`, 'direct_video')}
+                      className="hover:text-indigo-600 flex items-center gap-1 underline font-bold cursor-pointer bg-transparent border-0"
                     >
                       <ExternalLink className="w-3 h-3" />
                       Direct Video Stream
-                    </a>
+                    </button>
                   </div>
 
                 </div>

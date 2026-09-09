@@ -112,6 +112,7 @@ app.get('/api/stream', (req, res) => {
   let streamUrl = req.query.url;
   const filename = req.query.filename || 'instagram_media.mp4';
   const isInline = req.query.inline === 'true';
+  const isDownload = req.query.download === '1' || !isInline;
 
   const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
   const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
@@ -174,6 +175,8 @@ app.get('/api/stream', (req, res) => {
         res.statusCode = proxyRes.statusCode || 200;
         res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : (proxyRes.headers['content-type'] || defaultContentType));
         res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
 
         if (proxyRes.headers['content-range']) {
           res.setHeader('Content-Range', proxyRes.headers['content-range']);
@@ -188,7 +191,7 @@ app.get('/api/stream', (req, res) => {
         }
 
         const safeFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_');
-        if (isInline) {
+        if (isInline && !isDownload) {
           res.setHeader('Content-Disposition', 'inline');
         } else {
           res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);

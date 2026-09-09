@@ -1,9 +1,12 @@
 import sys
 import json
 import re
+import socket
 import urllib.request
 import urllib.parse
 import subprocess
+
+socket.setdefaulttimeout(4)
 try:
     import instaloader
     L = instaloader.Instaloader(
@@ -190,19 +193,15 @@ def extract_via_ytdlp(target_url, shortcode=None, forced_type=None, story_userna
         return {'success': False, 'error': 'No target URL provided'}
 
     binaries = [
-        ["python3", "-m", "yt_dlp"],
         ["python", "-m", "yt_dlp"],
+        ["python3", "-m", "yt_dlp"],
         ["yt-dlp"]
     ]
 
     for bin_cmd in binaries:
         try:
-            cmd = bin_cmd + ["-j", "--no-warnings", "--impersonate", "chrome", target_url]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=18)
-            if res.returncode != 0 or not res.stdout.strip():
-                cmd_fallback = bin_cmd + ["-j", "--no-warnings", target_url]
-                res = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=15)
-
+            cmd = bin_cmd + ["-j", "--no-warnings", "--socket-timeout", "5", target_url]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
             if res.returncode == 0 and res.stdout.strip():
                 info = json.loads(res.stdout)
 

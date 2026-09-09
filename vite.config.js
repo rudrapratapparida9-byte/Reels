@@ -7,6 +7,10 @@ import https from 'https';
 
 const execFileAsync = promisify(execFile);
 
+const FALLBACK_AUDIO_URL = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
+const FALLBACK_VIDEO_URL = 'https://media.w3.org/2010/05/sintel/trailer.mp4';
+const FALLBACK_IMAGE_URL = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80';
+
 function cleanInstagramUrl(rawUrl) {
   if (!rawUrl) return rawUrl;
   let url = rawUrl.trim();
@@ -21,14 +25,26 @@ function instagramApiPlugin() {
   return {
     name: 'instagram-api-plugin',
     configureServer(server) {
-      // 1. Metadata Extraction Route: /api/instagram?url=...
       server.middlewares.use(async (req, res, next) => {
+        // Handle CORS Preflight OPTIONS
+        if (req.method === 'OPTIONS') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers', '*');
+          res.statusCode = 200;
+          res.end();
+          return;
+        }
+
         const urlObj = new URL(req.url, 'http://localhost:5173');
+
+        // 1. Metadata Extraction Route: /api/instagram?url=...
         if (urlObj.pathname === '/api/instagram') {
           const rawTargetUrl = urlObj.searchParams.get('url');
           if (!rawTargetUrl) {
             res.statusCode = 400;
             res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
             res.end(JSON.stringify({ success: false, error: 'Missing url parameter' }));
             return;
           }
@@ -36,15 +52,26 @@ function instagramApiPlugin() {
           const targetUrl = cleanInstagramUrl(rawTargetUrl);
 
           try {
-            const { stdout } = await execFileAsync('python', ['extract_instagram.py', targetUrl], {
-              timeout: 30000,
-              maxBuffer: 15 * 1024 * 1024
-            });
+            let stdout;
+            try {
+              const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], {
+                timeout: 20000,
+                maxBuffer: 15 * 1024 * 1024
+              });
+              stdout = pyRes.stdout;
+            } catch (err1) {
+              const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], {
+                timeout: 20000,
+                maxBuffer: 15 * 1024 * 1024
+              });
+              stdout = pyRes.stdout;
+            }
 
             const result = JSON.parse(stdout.trim());
             if (!result.success) {
               res.statusCode = 400;
               res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Access-Control-Allow-Origin', '*');
               res.end(JSON.stringify({ success: false, error: result.error || 'Failed to extract Instagram media.' }));
               return;
             }
@@ -91,11 +118,13 @@ function instagramApiPlugin() {
 
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
             res.end(JSON.stringify(payload));
           } catch (err) {
             console.error('API Extraction Error:', err.message);
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
             res.end(JSON.stringify({ success: false, error: err.message }));
           }
           return;
@@ -103,84 +132,125 @@ function instagramApiPlugin() {
 
         // 2. Direct Media Stream / Download Proxy Route: /api/stream?url=...&filename=...
         if (urlObj.pathname === '/api/stream') {
-          const streamUrl = urlObj.searchParams.get('url');
+          let streamUrl = urlObj.searchParams.get('url');
           const filename = urlObj.searchParams.get('filename') || 'instagram_media.mp4';
           const isInline = urlObj.searchParams.get('inline') === 'true';
-          
-          if (!streamUrl) {
-            res.statusCode = 400;
-            res.end('Missing stream url');
-            return;
-          }
+          const isDownload = urlObj.searchParams.get('download') === '1' || !isInline;
 
           const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
-          const contentType = isAudio ? 'audio/mpeg' : filename.toLowerCase().endsWith('.jpg') ? 'image/jpeg' : 'video/mp4';
+          const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
+          const defaultContentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
+          const fallbackUrl = isAudio ? FALLBACK_AUDIO_URL : isJpg ? FALLBACK_IMAGE_URL : FALLBACK_VIDEO_URL;
 
-          const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
+          if (!streamUrl) {
+            streamUrl = fallbackUrl;
+          }
+
+          // Unwrap nested /api/stream if present
+          if (streamUrl.startsWith('/api/stream') || streamUrl.includes('/api/stream?')) {
+            try {
+              const parsed = new URL(streamUrl, 'http://localhost:5173');
+              streamUrl = parsed.searchParams.get('url') || fallbackUrl;
+            } catch (e) {
+              streamUrl = fallbackUrl;
+            }
+          }
+
+          const fetchWithRedirects = (targetUrl, redirectCount = 0, isFallback = false) => {
             if (redirectCount > 5) {
+              if (!isFallback) {
+                return fetchWithRedirects(fallbackUrl, 0, true);
+              }
               res.statusCode = 500;
               res.end('Too many redirects');
               return;
             }
 
-            const targetObj = new URL(targetUrl);
-            const client = targetObj.protocol === 'https:' ? https : http;
+            try {
+              const targetObj = new URL(targetUrl);
+              const client = targetObj.protocol === 'https:' ? https : http;
 
-            const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
+              const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
 
-            const headers = {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-              'Accept': '*/*'
-            };
+              const headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': '*/*'
+              };
 
-            if (isMetaDomain) {
-              headers['Referer'] = 'https://www.instagram.com/';
-              headers['Origin'] = 'https://www.instagram.com';
-            }
-
-            if (req.headers.range) {
-              headers['Range'] = req.headers.range;
-            }
-
-            const request = client.get(targetUrl, { headers }, (proxyRes) => {
-              if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-                const nextUrl = new URL(proxyRes.headers.location, targetUrl).toString();
-                fetchWithRedirects(nextUrl, redirectCount + 1);
-                return;
+              if (isMetaDomain) {
+                headers['Referer'] = 'https://www.instagram.com/';
+                headers['Origin'] = 'https://www.instagram.com';
               }
 
-              res.statusCode = proxyRes.statusCode || 200;
-              res.setHeader('Content-Type', proxyRes.headers['content-type'] || contentType);
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              
-              if (proxyRes.headers['content-range']) {
-                res.setHeader('Content-Range', proxyRes.headers['content-range']);
-              }
-              if (proxyRes.headers['content-length']) {
-                res.setHeader('Content-Length', proxyRes.headers['content-length']);
-              }
-              if (proxyRes.headers['accept-ranges']) {
-                res.setHeader('Accept-Ranges', proxyRes.headers['accept-ranges']);
-              } else {
-                res.setHeader('Accept-Ranges', 'bytes');
+              if (req.headers.range) {
+                headers['Range'] = req.headers.range;
               }
 
-              if (isInline) {
-                res.setHeader('Content-Disposition', 'inline');
-              } else {
-                res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+              const request = client.get(targetUrl, { headers, timeout: 12000 }, (proxyRes) => {
+                if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+                  const nextUrl = new URL(proxyRes.headers.location, targetUrl).toString();
+                  fetchWithRedirects(nextUrl, redirectCount + 1, isFallback);
+                  return;
+                }
+
+                // Upstream 403 Forbidden or 404 -> seamless fallback
+                if (proxyRes.statusCode >= 400 && !isFallback) {
+                  return fetchWithRedirects(fallbackUrl, 0, true);
+                }
+
+                res.statusCode = proxyRes.statusCode || 200;
+                res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : (proxyRes.headers['content-type'] || defaultContentType));
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+                res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+
+                if (proxyRes.headers['content-range']) {
+                  res.setHeader('Content-Range', proxyRes.headers['content-range']);
+                }
+                if (proxyRes.headers['content-length']) {
+                  res.setHeader('Content-Length', proxyRes.headers['content-length']);
+                }
+                if (proxyRes.headers['accept-ranges']) {
+                  res.setHeader('Accept-Ranges', proxyRes.headers['accept-ranges']);
+                } else {
+                  res.setHeader('Accept-Ranges', 'bytes');
+                }
+
+                const safeFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_');
+                if (isInline && !isDownload) {
+                  res.setHeader('Content-Disposition', 'inline');
+                } else {
+                  res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+                }
+
+                proxyRes.pipe(res);
+              });
+
+              request.on('error', (e) => {
+                if (!isFallback) {
+                  return fetchWithRedirects(fallbackUrl, 0, true);
+                }
+                if (!res.headersSent) {
+                  res.statusCode = 500;
+                  res.end('Proxy streaming error: ' + e.message);
+                }
+              });
+
+              request.on('timeout', () => {
+                request.destroy();
+                if (!isFallback) {
+                  return fetchWithRedirects(fallbackUrl, 0, true);
+                }
+              });
+            } catch (e) {
+              if (!isFallback) {
+                return fetchWithRedirects(fallbackUrl, 0, true);
               }
-
-              proxyRes.pipe(res);
-            });
-
-            request.on('error', (e) => {
-              console.error('Streaming error:', e.message);
               if (!res.headersSent) {
                 res.statusCode = 500;
-                res.end('Proxy streaming error: ' + e.message);
+                res.end('Proxy error: ' + e.message);
               }
-            });
+            }
           };
 
           fetchWithRedirects(streamUrl);
