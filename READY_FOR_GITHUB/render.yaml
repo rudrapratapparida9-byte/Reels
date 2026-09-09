@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: reelsvault
+    runtime: node
+    plan: free
+    buildCommand: npm install && pip install yt-dlp instaloader && npm run build
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
