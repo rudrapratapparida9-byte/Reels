@@ -1,0 +1,14 @@
+node_modules
+.vite
+dist
+*.log
+*.exe
+tunnel_out.txt
+tunnel_err.txt
+tunnel.log
+LIVE_URL.txt
+LIVE_WEBSITE_URL.txt
+__pycache__
+*.pyc
+scratch
+*.zip
