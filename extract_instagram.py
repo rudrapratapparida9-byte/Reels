@@ -5,6 +5,11 @@ import socket
 import urllib.request
 import urllib.parse
 import subprocess
+import io
+
+# Force UTF-8 standard output for Windows cp1252 compatibility
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 socket.setdefaulttimeout(4)
 try:

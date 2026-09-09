@@ -53,17 +53,16 @@ function instagramApiPlugin() {
 
           try {
             let stdout;
+            const pyOpts = {
+              timeout: 20000,
+              maxBuffer: 15 * 1024 * 1024,
+              env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+            };
             try {
-              const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], {
-                timeout: 20000,
-                maxBuffer: 15 * 1024 * 1024
-              });
+              const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], pyOpts);
               stdout = pyRes.stdout;
             } catch (err1) {
-              const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], {
-                timeout: 20000,
-                maxBuffer: 15 * 1024 * 1024
-              });
+              const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], pyOpts);
               stdout = pyRes.stdout;
             }
 

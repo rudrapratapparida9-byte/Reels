@@ -37,17 +37,16 @@ app.get('/api/instagram', async (req, res) => {
 
   try {
     let stdout;
+    const pyOpts = {
+      timeout: 30000,
+      maxBuffer: 15 * 1024 * 1024,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+    };
     try {
-      const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], {
-        timeout: 45000,
-        maxBuffer: 15 * 1024 * 1024
-      });
+      const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], pyOpts);
       stdout = pyRes.stdout;
     } catch (pyErr) {
-      const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], {
-        timeout: 45000,
-        maxBuffer: 15 * 1024 * 1024
-      });
+      const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], pyOpts);
       stdout = pyRes.stdout;
     }
 
