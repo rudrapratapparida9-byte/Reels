@@ -328,7 +328,7 @@ def main():
         owner = story_username or 'instagram_creator'
         
         # High quality playable media stream fallback so audio/video players never show 0:00
-        playable_media = "https://media.w3.org/2010/05/sintel/trailer.mp4"
+        playable_media = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
         playable_audio = "https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3"
         thumb = "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80"
 

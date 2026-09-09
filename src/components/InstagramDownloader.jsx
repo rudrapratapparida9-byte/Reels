@@ -25,11 +25,11 @@ const DEFAULT_MEDIA = {
   comments: '1,840',
   caption: 'Paste any public Instagram link above to fetch high-resolution videos, stories, audio tracks, and covers without watermark! 🚀',
   url: 'https://www.instagram.com/reel/sample/',
-  videoUrl: 'https://media.w3.org/2010/05/sintel/trailer.mp4',
+  videoUrl: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
   thumbnailUrl: 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80',
   images: ['https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80'],
   audioTitle: 'Original Audio Track (320kbps MP3)',
-  audioUrl: 'https://media.w3.org/2010/05/sintel/trailer.mp4',
+  audioUrl: 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3',
   duration: 'HD 1080p'
 };
 

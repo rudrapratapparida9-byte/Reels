@@ -8,7 +8,7 @@ import https from 'https';
 const execFileAsync = promisify(execFile);
 
 const FALLBACK_AUDIO_URL = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
-const FALLBACK_VIDEO_URL = 'https://media.w3.org/2010/05/sintel/trailer.mp4';
+const FALLBACK_VIDEO_URL = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
 const FALLBACK_IMAGE_URL = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80';
 
 function cleanInstagramUrl(rawUrl) {
