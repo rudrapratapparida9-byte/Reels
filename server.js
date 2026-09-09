@@ -50,7 +50,29 @@ app.get('/api/instagram', async (req, res) => {
       stdout = pyRes.stdout;
     }
 
-    const result = JSON.parse(stdout.trim());
+    let result;
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch (e) {
+      result = { success: false };
+    }
+
+    // If cloud server IP was blocked by Instagram and returned fallback data, query residential bridge
+    if (!result.success || result.username === '@instagram_creator') {
+      const bridges = [
+        'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
+      ];
+      for (const bridge of bridges) {
+        try {
+          const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(6000) });
+          const bridgePayload = await bridgeRes.json();
+          if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
+            return res.json(bridgePayload);
+          }
+        } catch (bridgeErr) {}
+      }
+    }
+
     if (!result.success) {
       return res.status(400).json({ success: false, error: result.error || 'Failed to extract Instagram media.' });
     }

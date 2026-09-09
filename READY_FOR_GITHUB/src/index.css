@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-primary: #f8faff;
+    --bg-secondary: #ffffff;
+    --card-bg: #ffffff;
+    --border-color: #e2e8f0;
+    --accent-indigo: #6366f1;
+    --accent-violet: #8b5cf6;
+    --accent-pink: #ec4899;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #f8faff;
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(236, 72, 153, 0.07) 0px, transparent 45%),
+      radial-gradient(at 100% 0%, rgba(99, 102, 241, 0.08) 0px, transparent 45%),
+      radial-gradient(at 50% 30%, rgba(241, 245, 249, 0.7) 0px, transparent 70%);
+    color: #0f172a;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+}
+
+/* 3D Perspective & Depth System */
+.perspective-container {
+  perspective: 1400px;
+}
+
+.card-3d {
+  transform-style: preserve-3d;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s ease;
+  box-shadow: 
+    0 15px 35px -5px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.card-3d:hover {
+  transform: translateY(-4px) rotateX(1.5deg) rotateY(-1deg);
+  box-shadow: 
+    0 25px 50px -10px rgba(236, 72, 153, 0.25),
+    0 0 0 1px rgba(236, 72, 153, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* 3D Floating Elements */
+@keyframes float3d {
+  0%, 100% {
+    transform: translateY(0px) translateZ(10px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) translateZ(25px) rotate(0.5deg);
+  }
+}
+
+.animate-float-3d {
+  animation: float3d 5s ease-in-out infinite;
+}
+
+/* 3D Buttons */
+.btn-3d {
+  position: relative;
+  transition: all 0.15s ease;
+  box-shadow: 0 4px 0 #3730a3, 0 8px 16px rgba(99, 102, 241, 0.35);
+}
+
+.btn-3d:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 0 #3730a3, 0 12px 20px rgba(99, 102, 241, 0.45);
+}
+
+.btn-3d:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #3730a3, 0 3px 6px rgba(99, 102, 241, 0.2);
+}
+
+.btn-3d-pink {
+  position: relative;
+  transition: all 0.15s ease;
+  box-shadow: 0 4px 0 #9d174d, 0 8px 16px rgba(236, 72, 153, 0.35);
+}
+.btn-3d-pink:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 0 #9d174d, 0 12px 20px rgba(236, 72, 153, 0.45);
+}
+.btn-3d-pink:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #9d174d, 0 3px 6px rgba(236, 72, 153, 0.2);
+}
+
+/* Glassmorphism Classes with 3D Depth */
+.glass-panel {
+  background: rgba(13, 20, 36, 0.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 
+    0 20px 40px -15px rgba(0, 0, 0, 0.6),
+    inset 0 1px 1px rgba(255, 255, 255, 0.12);
+}
+
+.glass-input {
+  background: rgba(8, 12, 22, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+  border-radius: 10px;
+  padding: 8px 12px;
+  outline: none;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+  transition: all 0.2s ease;
+}
+
+.glass-input:focus {
+  border-color: #ec4899;
+  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.25), inset 0 1px 2px rgba(0,0,0,0.3);
+}
+
+/* Glowing text gradients */
+.gradient-text {
+  background: linear-gradient(135deg, #f472b6 0%, #c084fc 35%, #818cf8 70%, #38bdf8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Sound Wave equalizer */
+@keyframes soundWave {
+  0%, 100% { height: 4px; }
+  50% { height: 28px; }
+}
+
+.sound-bar {
+  display: inline-block;
+  width: 4px;
+  background: linear-gradient(to top, #ec4899, #c084fc, #6366f1);
+  border-radius: 3px;
+  box-shadow: 0 0 8px rgba(236, 72, 153, 0.6);
+  animation: soundWave 1.2s infinite ease-in-out;
+}
+
+.sound-bar:nth-child(2) { animation-delay: 0.2s; }
+.sound-bar:nth-child(3) { animation-delay: 0.4s; }
+.sound-bar:nth-child(4) { animation-delay: 0.1s; }
+.sound-bar:nth-child(5) { animation-delay: 0.5s; }
+.sound-bar:nth-child(6) { animation-delay: 0.3s; }
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(8, 12, 22, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(236, 72, 153, 0.6);
+}
