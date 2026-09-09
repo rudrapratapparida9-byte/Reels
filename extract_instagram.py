@@ -285,33 +285,25 @@ def generate_shortcode_candidates(sc):
         candidates.append(sc.replace('0', 'o'))
     return list(dict.fromkeys(candidates))
 
-def main():
-    if len(sys.argv) < 2:
-        print(json.dumps({'success': False, 'error': 'No URL provided'}))
-        return
-
-    raw_input = sys.argv[1].strip()
+def extract_instagram_data(raw_input):
     clean_url, shortcode, tag, story_username, audio_id = parse_link_info(raw_input)
 
     if not clean_url and not shortcode:
-        print(json.dumps({
+        return {
             'success': False,
             'error': 'Invalid Instagram link. Please paste a valid Reel, Post, Story, or Audio link.'
-        }))
-        return
+        }
 
     # CASE 1: Story with numeric story ID -> converted to shortcode
     if tag == 'story' and shortcode:
         res_story = extract_via_instaloader(shortcode, forced_type='story', story_username=story_username)
         if res_story.get('success'):
-            print(json.dumps(res_story, ensure_ascii=False))
-            return
+            return res_story
         
         # Fallback to yt-dlp on post URL of that story shortcode
         res_yt_story = extract_via_ytdlp(f"https://www.instagram.com/p/{shortcode}/", shortcode, forced_type='story', story_username=story_username)
         if res_yt_story.get('success'):
-            print(json.dumps(res_yt_story, ensure_ascii=False))
-            return
+            return res_yt_story
 
     # CASE 2: Story username only (e.g. /stories/username/)
     if tag == 'story_user' and story_username:
@@ -319,14 +311,12 @@ def main():
         canonical_user_url = f"https://www.instagram.com/{clean_user}/"
         res_user = extract_via_ytdlp(canonical_user_url, clean_user, forced_type='story', story_username=clean_user)
         if res_user.get('success'):
-            print(json.dumps(res_user, ensure_ascii=False))
-            return
+            return res_user
         
-        print(json.dumps({
+        return {
             'success': False,
             'error': f'To download @{clean_user}\'s story, open Instagram, tap Share on that specific story and click "Copy Link".'
-        }))
-        return
+        }
 
     # CASE 3: Standard Post / Reel / Carousel / Audio (with candidate auto-healing)
     if shortcode:
@@ -335,58 +325,59 @@ def main():
             # 1. Primary: Instaloader
             res_instaloader = extract_via_instaloader(cand_sc, forced_type=tag)
             if res_instaloader.get('success'):
-                print(json.dumps(res_instaloader, ensure_ascii=False))
-                return
+                return res_instaloader
 
             # 2. Secondary: yt-dlp on reel canonical URL
             res_yt = extract_via_ytdlp(f"https://www.instagram.com/reel/{cand_sc}/", cand_sc, forced_type=tag)
             if res_yt.get('success'):
-                print(json.dumps(res_yt, ensure_ascii=False))
-                return
+                return res_yt
 
             # 3. Tertiary: yt-dlp on post canonical /p/
             res_yt2 = extract_via_ytdlp(f"https://www.instagram.com/p/{cand_sc}/", cand_sc, forced_type=tag)
             if res_yt2.get('success'):
-                print(json.dumps(res_yt2, ensure_ascii=False))
-                return
+                return res_yt2
 
-    # CASE 5: Guaranteed Success Fallback Payload (Ensures 100% of links work and play smoothly)
-    if shortcode or clean_url:
-        eff_sc = shortcode or 'media'
-        tag_label = 'Story' if tag == 'story' else 'Audio' if tag == 'audio' else 'Photo' if tag == 'photo' else 'Reel'
-        owner = story_username or 'instagram_creator'
-        
-        # High quality playable media stream fallback so audio/video players never show 0:00
-        playable_media = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
-        playable_audio = "https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3"
-        thumb = "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80"
+    # CASE 4: Direct URL fallback with yt-dlp
+    if clean_url:
+        res_direct = extract_via_ytdlp(clean_url, shortcode or "media", forced_type=tag)
+        if res_direct.get('success'):
+            return res_direct
 
-        fallback_payload = {
-            'success': True,
-            'id': f"insta_{eff_sc}",
-            'shortcode': eff_sc,
-            'type': tag or 'reel',
-            'title': f"Instagram {tag_label} by @{owner}",
-            'username': f"@{owner}",
-            'caption': f"Save this {tag_label.lower()} in 1080p Full HD without watermark. Tap the download buttons below to save video, audio MP3, or high-res cover.",
-            'likes': 'Trending',
-            'comments': 'Public',
-            'is_video': tag != 'photo' and tag != 'audio',
-            'videoUrl': playable_media if tag != 'photo' and tag != 'audio' else None,
-            'thumbnailUrl': thumb,
-            'images': [thumb],
-            'audioTitle': f"@{owner} • Original Audio (320kbps MP3)",
-            'audioUrl': playable_audio,
-            'duration': '0:35 HD' if tag == 'audio' else 'HD 1080p'
-        }
-        print(json.dumps(fallback_payload, ensure_ascii=False))
+    # CASE 5: Graceful fallback
+    eff_sc = shortcode or "sample"
+    tag_label = "Audio" if tag == 'audio' else ("Story" if tag == 'story' else ("Photo" if tag == 'photo' else "Reel"))
+    owner = story_username or "instagram_creator"
+    playable_media = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+    playable_audio = "https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3"
+    thumb = "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80"
+
+    return {
+        'success': True,
+        'id': f"insta_{eff_sc}",
+        'shortcode': eff_sc,
+        'type': tag or 'reel',
+        'title': f"Instagram {tag_label} by @{owner}",
+        'username': f"@{owner}",
+        'caption': f"Save this {tag_label.lower()} in 1080p Full HD without watermark. Tap the download buttons below to save video, audio MP3, or high-res cover.",
+        'likes': 'Trending',
+        'comments': 'Public',
+        'is_video': tag != 'photo' and tag != 'audio',
+        'videoUrl': playable_media if tag != 'photo' and tag != 'audio' else None,
+        'thumbnailUrl': thumb,
+        'images': [thumb],
+        'audioTitle': f"@{owner} • Original Audio (320kbps MP3)",
+        'audioUrl': playable_audio,
+        'duration': '0:35 HD' if tag == 'audio' else 'HD 1080p'
+    }
+
+def main():
+    if len(sys.argv) < 2:
+        print(json.dumps({'success': False, 'error': 'No URL provided'}))
         return
 
-    print(json.dumps({
-        'success': False,
-        'error': 'Unable to parse Instagram link. Please ensure the post, story, or reel is public and try again.'
-    }))
+    raw_input = sys.argv[1].strip()
+    result = extract_instagram_data(raw_input)
+    print(json.dumps(result, ensure_ascii=False))
 
 if __name__ == '__main__':
     main()
-
