@@ -1,2 +1,5 @@
-yt-dlp>=2024.8.6
-instaloader>=4.13
+flask
+requests
+gunicorn
+yt-dlp
+instaloader
