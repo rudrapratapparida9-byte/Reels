@@ -7,8 +7,8 @@ import React from 'react';
  */
 export default function AdBanner({ 
   format = 'in-feed', 
-  adClient = '', // e.g. 'ca-pub-XXXXXXXXXXXXXXXX'
-  adSlot = '',   // e.g. '1234567890'
+  adClient = 'ca-pub-6931746397574530',
+  adSlot = '',   
   className = '' 
 }) {
   // If real AdSense credentials are provided, render the live script unit
