@@ -14,25 +14,6 @@ import {
   downloadMediaFile 
 } from '../utils/instaDownloader';
 
-const DEFAULT_MEDIA = {
-  id: 'insta_sample',
-  shortcode: 'sample',
-  type: 'reel',
-  title: 'Instagram Reel Preview (Ready to Download)',
-  username: '@instagram_creator',
-  userAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-  likes: '142.5K',
-  comments: '1,840',
-  caption: 'Paste any public Instagram link above to fetch high-resolution videos, stories, audio tracks, and covers without watermark! 🚀',
-  url: 'https://www.instagram.com/reel/sample/',
-  videoUrl: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
-  thumbnailUrl: 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80',
-  images: ['https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80'],
-  audioTitle: 'Original Audio Track (320kbps MP3)',
-  audioUrl: 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3',
-  duration: 'HD 1080p'
-};
-
 const FAQ_ITEMS = [
   {
     q: "Is ReelsVault.io 100% free and unlimited?",
