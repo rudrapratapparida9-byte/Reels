@@ -22,6 +22,12 @@ try:
         compress_json=False,
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     )
+    if hasattr(L, 'context') and hasattr(L.context, '_session'):
+        L.context._session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'X-IG-App-ID': '936619743392459',
+            'Accept-Language': 'en-US,en;q=0.9'
+        })
 except Exception:
     L = None
 
@@ -258,9 +264,16 @@ def extract_via_ytdlp(target_url, shortcode=None, forced_type=None, story_userna
                 direct_audio = None
                 if info.get('formats') and isinstance(info['formats'], list):
                     for f in info['formats']:
-                        if (f.get('vcodec') == 'none' or not f.get('vcodec')) and f.get('acodec') and f.get('url'):
-                            direct_audio = f['url']
+                        acodec = f.get('acodec')
+                        vcodec = f.get('vcodec')
+                        if acodec and acodec != 'none' and (not vcodec or vcodec == 'none' or 'a' in str(f.get('format_id', ''))):
+                            direct_audio = f.get('url')
                             break
+                    if not direct_audio:
+                        for f in info['formats']:
+                            if f.get('acodec') and f.get('acodec') != 'none':
+                                direct_audio = f.get('url')
+                                break
                 if not direct_audio:
                     direct_audio = info.get('url')
 
@@ -271,6 +284,15 @@ def extract_via_ytdlp(target_url, shortcode=None, forced_type=None, story_userna
                 )
                 item_type = forced_type if forced_type else ('reel' if is_video else 'photo')
                 effective_sc = shortcode or info.get('id') or 'media'
+
+                uploader = username or info.get('uploader') or 'instagram_creator'
+                track = info.get('track') or info.get('title')
+                artist = info.get('artist') or uploader
+
+                if info.get('track'):
+                    audio_title = f"{artist} • {track} (320kbps MP3)"
+                else:
+                    audio_title = f"{uploader} • Original Audio (320kbps MP3)"
 
                 return {
                     'success': True,
@@ -286,7 +308,7 @@ def extract_via_ytdlp(target_url, shortcode=None, forced_type=None, story_userna
                     'videoUrl': info.get('url') if is_video else None,
                     'thumbnailUrl': info.get('thumbnail') or info.get('url'),
                     'images': [info.get('thumbnail')] if info.get('thumbnail') else ([info.get('url')] if info.get('url') else []),
-                    'audioTitle': f"{username} • Original Audio (320kbps MP3)",
+                    'audioTitle': audio_title,
                     'audioUrl': direct_audio if is_video else None,
                     'duration': f"{round(info.get('duration', 0))}s HD" if info.get('duration') else "HD 1080p"
                 }
