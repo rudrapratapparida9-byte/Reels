@@ -341,11 +341,19 @@ function parseYtdlpInfo(info, targetUrl) {
 }
 
 async function extractWithYtdlpDirect(targetUrl) {
+  const commonHeaders = [
+    '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    '--add-header', 'X-IG-App-ID: 936619743392459',
+    '--add-header', 'Accept-Language: en-US,en;q=0.9'
+  ];
+
   const commands = [
-    { bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '10', targetUrl] },
-    { bin: 'python', args: ['-m', 'yt_dlp', '-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '10', targetUrl] },
-    { bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '10', targetUrl] },
-    { bin: 'yt-dlp', args: ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '10', targetUrl] }
+    { bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '8', ...commonHeaders, targetUrl] },
+    { bin: 'python3', args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] },
+    { bin: 'python', args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] },
+    { bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '8', ...commonHeaders, targetUrl] },
+    { bin: 'python', args: ['-m', 'yt_dlp', '-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '8', ...commonHeaders, targetUrl] },
+    { bin: 'yt-dlp', args: ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '8', ...commonHeaders, targetUrl] }
   ];
 
   for (const cmd of commands) {
