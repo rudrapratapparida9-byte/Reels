@@ -208,6 +208,10 @@ def extract_with_ytdlp(url_or_shortcode):
         video_url = progressive_url
         final_audio_url = audio_url or progressive_url
     else:
+        # Video-only or Audio-only DASH stream without both tracks
+        if dash_video_url and not audio_url:
+            # We must NOT treat video-only stream as having audio
+            return None
         video_url = dash_video_url or progressive_url or info.get('url')
         final_audio_url = audio_url or video_url
 

@@ -250,6 +250,10 @@ app.get('/api/instagram', async (req, res) => {
                 finalVideoUrl = progressiveUrl;
                 finalAudioUrl = audioUrl || progressiveUrl;
               } else {
+                if (dashVideoUrl && !audioUrl) {
+                  // Skip video-only DASH format so other scrapers or Instaloader can find the sound
+                  continue;
+                }
                 finalVideoUrl = dashVideoUrl || progressiveUrl || (ytJson.url || '');
                 finalAudioUrl = audioUrl || finalVideoUrl;
               }
