@@ -77,7 +77,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '4.1.0-cdn-signature-normalized',
+    version: '4.2.0-tunnel-stream-bridge',
     time: new Date().toISOString()
   });
 });
