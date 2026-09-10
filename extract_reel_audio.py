@@ -9,6 +9,11 @@ import re
 import xml.etree.ElementTree as ET
 import urllib.request
 import urllib.parse
+import io
+
+# Force UTF-8 standard output for Unicode / Emoji compatibility
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 try:
     import instaloader
