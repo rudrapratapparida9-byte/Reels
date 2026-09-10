@@ -115,10 +115,13 @@ def extract_with_ytdlp(url_or_shortcode):
     """Extraction using yt-dlp to guarantee audio and video streams."""
     info = None
 
-    if url_or_shortcode.startswith('http'):
+    sc = extract_shortcode(url_or_shortcode)
+    if sc and sc.isdigit():
+        target_url = f"https://www.instagram.com/reels/audio/{sc}/"
+    elif sc:
+        target_url = f"https://www.instagram.com/reel/{sc}/"
+    elif url_or_shortcode.startswith('http'):
         target_url = url_or_shortcode
-    elif url_or_shortcode.isdigit():
-        target_url = f"https://www.instagram.com/reels/audio/{url_or_shortcode}/"
     else:
         target_url = f"https://www.instagram.com/reel/{url_or_shortcode}/"
 
@@ -256,7 +259,7 @@ def get_reel_audio_and_video(url_or_shortcode):
     """
     # 1. Primary: yt-dlp extraction
     yt_data = extract_with_ytdlp(url_or_shortcode)
-    if yt_data and yt_data.get('videoUrl') and yt_data.get('audioUrl') and yt_data['videoUrl'] != yt_data['audioUrl']:
+    if yt_data and yt_data.get('success') and (yt_data.get('videoUrl') or yt_data.get('audioUrl')):
         return yt_data
 
     shortcode = extract_shortcode(url_or_shortcode)
