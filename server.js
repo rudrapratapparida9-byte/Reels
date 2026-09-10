@@ -77,7 +77,8 @@ app.get('/api/instagram', async (req, res) => {
           const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(6000) });
           const bridgePayload = await bridgeRes.json();
           if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
-            return res.json(bridgePayload);
+            result = bridgePayload.data;
+            break;
           }
         } catch (bridgeErr) {}
       }
