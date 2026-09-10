@@ -17,12 +17,60 @@ const PORT = process.env.PORT || 5000;
 // Serve static frontend assets
 app.use(express.static(path.join(__dirname, 'dist')));
 
+function fetchJson(targetUrl, timeoutMs = 25000) {
+  return new Promise((resolve, reject) => {
+    try {
+      const parsedUrl = new URL(targetUrl);
+      const client = parsedUrl.protocol === 'https:' ? https : http;
+      const req = client.get(targetUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          'Accept': 'application/json'
+        },
+        timeout: timeoutMs
+      }, (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error(`Bridge HTTP status ${res.statusCode}`));
+        }
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', chunk => { body += chunk; });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch (e) {
+            reject(new Error(`JSON parse error: ${e.message}`));
+          }
+        });
+      });
+      req.on('error', (err) => reject(err));
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error(`Timeout after ${timeoutMs}ms`));
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.5.0-dash-live',
+    version: '2.6.0-dash-https',
     time: new Date().toISOString()
   });
+});
+
+app.get('/api/test-bridge', async (req, res) => {
+  const targetUrl = req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/';
+  const bridge = 'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram';
+  try {
+    const data = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}`, 25000);
+    res.json({ success: true, bridge, data });
+  } catch (err) {
+    res.status(500).json({ success: false, bridge, error: err.message, stack: err.stack });
+  }
 });
 
 function cleanInstagramUrl(rawUrl) {
@@ -62,20 +110,14 @@ app.get('/api/instagram', async (req, res) => {
     ];
     for (const bridge of bridges) {
       try {
-        const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          },
-          signal: AbortSignal.timeout(20000)
-        });
-        if (bridgeRes.ok) {
-          const bridgePayload = await bridgeRes.json();
-          if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
-            result = bridgePayload.data;
-            break;
-          }
+        const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}`, 25000);
+        if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
+          result = bridgePayload.data;
+          break;
         }
-      } catch (bridgeErr) {}
+      } catch (bridgeErr) {
+        console.warn('Bridge error:', bridgeErr.message);
+      }
     }
 
     // 2. Try dedicated extract_reel_audio.py across available Python binaries
