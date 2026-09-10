@@ -300,15 +300,8 @@ app.get('/api/instagram', async (req, res) => {
     }
     const rawThumb = extractRawUrl(result.thumbnailUrl);
 
-    // Determine if video is a video-only DASH stream that requires FFmpeg merging
-    const isVideoOnlyDash = rawVideo && (
-      rawVideo.includes('.dash_') || 
-      rawVideo.includes('_dash_') || 
-      rawVideo.includes('dash_r2evevp9') ||
-      (result.videoUrl && result.videoUrl.includes('/api/merge'))
-    );
-
-    const hasSeparateAudio = Boolean(isVideoOnlyDash && rawAudio && rawVideo && rawAudio !== rawVideo);
+    // If separate audio stream exists and differs from the video URL, ALWAYS merge with FFmpeg to guarantee sound
+    const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
 
     const proxiedVideoUrl = rawVideo 
       ? (hasSeparateAudio
