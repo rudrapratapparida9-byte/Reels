@@ -182,7 +182,8 @@ def extract_with_ytdlp(url_or_shortcode):
             
     formats = info.get('formats', [])
     audio_url = None
-    dash_video_url = None
+    h264_video_url = None
+    generic_video_url = None
     progressive_url = None
 
     for f in formats:
@@ -190,32 +191,26 @@ def extract_with_ytdlp(url_or_shortcode):
         vcodec = str(f.get('vcodec', '') or '').lower()
         acodec = str(f.get('acodec', '') or '').lower()
         f_url = str(f.get('url', ''))
+        if not f_url:
+            continue
 
-        # Dedicated Audio Track
-        if fid.endswith('a') or 'audio' in fid or acodec.startswith('mp4a') or acodec.startswith('aac') or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec)):
-            if f_url:
+        is_audio_only = fid.endswith('a') or 'audio' in fid or acodec.startswith('mp4a') or acodec.startswith('aac') or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec))
+        is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264') or fid in ['0', '1', '2']
+        is_video = (vcodec and vcodec != 'none') or fid.endswith('v') or is_h264
+
+        if is_audio_only:
+            if not audio_url:
                 audio_url = f_url
-        # Video-Only DASH Track
-        elif fid.endswith('v') or (vcodec and vcodec != 'none' and (acodec == 'none' or not acodec)):
-            if f_url:
-                dash_video_url = f_url
-        # Combined Progressive Video (Contains BOTH video AND audio)
         elif vcodec and vcodec != 'none' and acodec and acodec != 'none':
-            if f_url:
-                progressive_url = f_url
+            progressive_url = f_url
+        elif is_h264:
+            h264_video_url = f_url
+        elif is_video and not generic_video_url:
+            generic_video_url = f_url
 
-    if progressive_url:
-        video_url = progressive_url
-        final_audio_url = audio_url or progressive_url
-        video_only_url = dash_video_url or progressive_url
-    elif dash_video_url and audio_url:
-        video_url = dash_video_url
-        final_audio_url = audio_url
-        video_only_url = dash_video_url
-    else:
-        video_url = dash_video_url or progressive_url or info.get('url')
-        final_audio_url = audio_url or video_url
-        video_only_url = dash_video_url or video_url
+    video_url = progressive_url or h264_video_url or generic_video_url or info.get('url')
+    final_audio_url = audio_url or progressive_url or video_url
+    video_only_url = h264_video_url or generic_video_url or progressive_url or video_url
 
     shortcode = extract_shortcode(url_or_shortcode) or info.get('id', 'media')
     uploader = info.get('uploader') or info.get('uploader_id') or 'instagram_creator'

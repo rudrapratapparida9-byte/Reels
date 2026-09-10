@@ -277,7 +277,8 @@ function parseYtdlpInfo(info, targetUrl) {
   if (!info) return null;
   const formats = info.formats || [];
   let audioUrl = null;
-  let dashVideoUrl = null;
+  let h264VideoUrl = null;
+  let genericVideoUrl = null;
   let progressiveUrl = null;
 
   for (const f of formats) {
@@ -285,19 +286,28 @@ function parseYtdlpInfo(info, targetUrl) {
     const vcodec = String(f.vcodec || '').toLowerCase();
     const acodec = String(f.acodec || '').toLowerCase();
     const fUrl = String(f.url || '');
+    if (!fUrl) continue;
 
-    if (fid.endsWith('a') || fid.includes('audio') || acodec.startsWith('mp4a') || acodec.startsWith('aac') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
-      if (fUrl) audioUrl = fUrl;
-    } else if (fid.endsWith('v') || (vcodec && vcodec !== 'none' && (acodec === 'none' || !acodec))) {
-      if (fUrl) dashVideoUrl = fUrl;
+    const isAudioOnly = fid.endsWith('a') || fid.includes('audio') || acodec.startsWith('mp4a') || acodec.startsWith('aac') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec));
+    const isH264 = vcodec.startsWith('avc') || vcodec.startsWith('h264') || fid === '0' || fid === '1' || fid === '2';
+    const isVideo = (vcodec && vcodec !== 'none') || fid.endsWith('v') || isH264;
+
+    if (isAudioOnly) {
+      if (!audioUrl) audioUrl = fUrl;
     } else if (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') {
-      if (fUrl) progressiveUrl = fUrl;
+      progressiveUrl = fUrl;
+    } else if (isH264) {
+      // Prioritize H.264 for iPhone/iPad/Mac Safari compatibility
+      h264VideoUrl = fUrl;
+    } else if (isVideo && !genericVideoUrl) {
+      genericVideoUrl = fUrl;
     }
   }
 
-  const videoUrl = progressiveUrl || dashVideoUrl || info.url;
+  // Universal Video Stream: Prioritize Progressive -> H.264 -> Generic -> Direct URL
+  const videoUrl = progressiveUrl || h264VideoUrl || genericVideoUrl || info.url;
   const finalAudioUrl = audioUrl || progressiveUrl || videoUrl;
-  const videoOnlyUrl = dashVideoUrl || progressiveUrl || videoUrl;
+  const videoOnlyUrl = h264VideoUrl || genericVideoUrl || progressiveUrl || videoUrl;
 
   const shortcode = info.id || (cleanInstagramUrl(targetUrl).match(/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i)?.[1]) || 'media';
   const uploader = info.uploader || info.uploader_id || 'instagram_creator';
