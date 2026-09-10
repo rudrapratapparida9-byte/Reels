@@ -302,8 +302,15 @@ def get_reel_audio_and_video(url_or_shortcode):
             if yt_data and yt_data.get('videoUrl'):
                 video_url = yt_data['videoUrl']
 
-            # If no separate DASH stream, fallback to main video URL
-            final_audio_url = audio_stream_url or (yt_data and yt_data.get('audioUrl')) or video_url
+            # If no audio stream was found in DASH manifest, only accept if video is true progressive
+            if not audio_stream_url and (yt_data and yt_data.get('audioUrl') and yt_data['audioUrl'] != video_url):
+                audio_stream_url = yt_data['audioUrl']
+
+            if not audio_stream_url and not ('xpv_progressive' in video_url and 'dash_baseline' not in video_url):
+                # No genuine audio stream found, continue to external fallbacks
+                raise Exception("No audio stream in Instaloader DASH manifest")
+
+            final_audio_url = audio_stream_url or video_url
 
             # 3. Extract Song/Artist Metadata if available
             clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}

@@ -3,3 +3,5 @@ requests
 gunicorn
 yt-dlp
 instaloader
+curl_cffi
+certifi

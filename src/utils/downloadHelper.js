@@ -125,7 +125,7 @@ export async function downloadMediaFile(mediaUrl, filename = 'instagram_media.mp
   // This is the cleanest HTML5 method: forces exact filename, avoids popups/new tabs, works on Mobile & Desktop
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
 
     // Try fetching via the attachment proxy first, then raw URL
     const fetchUrl = proxyDownloadUrl;
