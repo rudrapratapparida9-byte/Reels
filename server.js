@@ -199,13 +199,34 @@ app.get('/api/instagram', async (req, res) => {
                 }
               }
 
+              // 1. FIRST find progressive format that contains BOTH video and audio
               for (let i = formats.length - 1; i >= 0; i--) {
                 const f = formats[i];
                 const fid = String(f.format_id || '');
                 const vcodec = String(f.vcodec || '');
-                if (vcodec !== 'none' && !fid.endsWith('a')) {
+                const acodec = String(f.acodec || '');
+                const url = String(f.url || '');
+                
+                const isProgressive = (vcodec && vcodec !== 'none' && acodec && acodec !== 'none' && !fid.endsWith('a')) ||
+                                      url.includes('xpv_progressive') ||
+                                      url.includes('progressive_recipe=1');
+                
+                if (isProgressive) {
                   videoUrl = f.url;
                   break;
+                }
+              }
+
+              // 2. Fallback to any video format
+              if (!videoUrl) {
+                for (let i = formats.length - 1; i >= 0; i--) {
+                  const f = formats[i];
+                  const fid = String(f.format_id || '');
+                  const vcodec = String(f.vcodec || '');
+                  if (vcodec !== 'none' && !fid.endsWith('a')) {
+                    videoUrl = f.url;
+                    break;
+                  }
                 }
               }
 

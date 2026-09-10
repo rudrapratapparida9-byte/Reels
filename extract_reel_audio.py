@@ -93,13 +93,24 @@ def extract_with_ytdlp(url_or_shortcode):
                         audio_url = f.get('url')
                         break
 
-            # Find best progressive video or video stream
+            # Find progressive video stream (WITH BOTH VIDEO AND AUDIO)
             for f in reversed(formats):
                 fid = str(f.get('format_id', ''))
                 vcodec = str(f.get('vcodec', ''))
-                if vcodec != 'none' and not fid.endswith('a'):
+                acodec = str(f.get('acodec', ''))
+                url = str(f.get('url', ''))
+                if ((vcodec != 'none' and acodec != 'none' and acodec) or 'xpv_progressive' in url or 'progressive_recipe=1' in url) and not fid.endswith('a'):
                     video_url = f.get('url')
                     break
+
+            # Fallback to any video stream
+            if not video_url:
+                for f in reversed(formats):
+                    fid = str(f.get('format_id', ''))
+                    vcodec = str(f.get('vcodec', ''))
+                    if vcodec != 'none' and not fid.endswith('a'):
+                        video_url = f.get('url')
+                        break
 
             if not video_url:
                 video_url = info.get('url')
@@ -158,9 +169,19 @@ def get_reel_audio_and_video(url_or_shortcode):
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             raw = getattr(post, '_node', {}) or {}
             
-            # 1. Video URL from Instagram
-            video_url = post.video_url
-            is_video = bool(post.is_video)
+            # 1. Video URL from Instagram (prioritize progressive version with built-in audio)
+            video_versions = raw.get('video_versions') or []
+            video_url = None
+            for vv in video_versions:
+                v_u = vv.get('url')
+                if v_u and ('xpv_progressive' in v_u or 'progressive_recipe=1' in v_u):
+                    video_url = v_u
+                    break
+            if not video_url and video_versions:
+                video_url = video_versions[0].get('url')
+            if not video_url:
+                video_url = post.video_url
+            is_video = bool(post.is_video or video_url)
 
             # 2. Extract Dedicated Audio Stream from DASH Manifest XML
             manifest = raw.get('video_dash_manifest') or ''
