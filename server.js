@@ -340,36 +340,64 @@ function parseYtdlpInfo(info, targetUrl) {
   };
 }
 
-async function extractWithYtdlpDirect(targetUrl) {
+async function extractInstagramFast(targetUrl) {
   const commonHeaders = [
     '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
     '--add-header', 'X-IG-App-ID: 936619743392459',
     '--add-header', 'Accept-Language: en-US,en;q=0.9'
   ];
 
-  const commands = [
-    { bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '8', ...commonHeaders, targetUrl] },
-    { bin: 'python3', args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] },
-    { bin: 'python', args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] },
-    { bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '8', ...commonHeaders, targetUrl] },
-    { bin: 'python', args: ['-m', 'yt_dlp', '-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '8', ...commonHeaders, targetUrl] },
-    { bin: 'yt-dlp', args: ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '8', ...commonHeaders, targetUrl] }
-  ];
-
-  for (const cmd of commands) {
-    if ((cmd.bin.startsWith('.') || path.isAbsolute(cmd.bin)) && !fs.existsSync(cmd.bin)) continue;
-    try {
-      const res = await execFileAsync(cmd.bin, cmd.args, { cwd: __dirname, timeout: 15000, maxBuffer: 50 * 1024 * 1024 });
-      if (res && res.stdout) {
-        const info = JSON.parse(res.stdout.trim());
-        const parsed = parseYtdlpInfo(info, targetUrl);
-        if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
-          return parsed;
+  // Worker 1: Direct Python Extractor
+  const runPythonWorker = async () => {
+    const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+    const bins = ['python3', 'python', 'py'];
+    for (const b of bins) {
+      try {
+        const res = await execFileAsync(b, [scriptPath, targetUrl], {
+          cwd: __dirname,
+          timeout: 10000,
+          maxBuffer: 25 * 1024 * 1024,
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        });
+        if (res && res.stdout) {
+          const parsed = JSON.parse(res.stdout.trim());
+          if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
+            return parsed;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
+    throw new Error('Python worker failed');
+  };
+
+  // Worker 2: Standalone yt-dlp binary
+  const runYtdlpWorker = async () => {
+    const ytdlpBin = path.join(__dirname, 'yt-dlp');
+    const bins = fs.existsSync(ytdlpBin) ? [ytdlpBin, 'yt-dlp'] : ['yt-dlp'];
+    for (const b of bins) {
+      try {
+        const args = ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '6', ...commonHeaders, targetUrl];
+        const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 10000, maxBuffer: 30 * 1024 * 1024 });
+        if (res && res.stdout) {
+          const info = JSON.parse(res.stdout.trim());
+          const parsed = parseYtdlpInfo(info, targetUrl);
+          if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
+            return parsed;
+          }
+        }
+      } catch (e) {}
+    }
+    throw new Error('yt-dlp worker failed');
+  };
+
+  // Run both concurrently - whichever completes first (in 2-3s) returns immediately!
+  try {
+    return await Promise.any([runPythonWorker(), runYtdlpWorker()]);
+  } catch (err) {
+    try { return await runPythonWorker(); } catch (e) {}
+    try { return await runYtdlpWorker(); } catch (e) {}
+    return null;
   }
-  return null;
 }
 
 // 1. API: Instagram Media Extraction
@@ -388,61 +416,11 @@ app.get('/api/instagram', async (req, res) => {
   }
 
   try {
-    let result = null;
-    const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
-
-    // 1. Standalone Direct yt-dlp binary extraction
-    result = await extractWithYtdlpDirect(targetUrl);
-
-    // 2. Fast Residential Bridge
-    if ((!result || !result.success) && !isBridgeRequest) {
-      const bridgeUrls = [
-        process.env.EXTRACTION_BRIDGE_URL
-      ].filter(Boolean);
-
-      for (const bridge of bridgeUrls) {
-        try {
-          const bRes = await fetch(`${bridge}/api/instagram?url=${encodeURIComponent(targetUrl)}&nobridge=1`, {
-            headers: { 'Accept': 'application/json', 'X-Bridge-Request': 'true' },
-            signal: AbortSignal.timeout(8000)
-          });
-          if (bRes.ok) {
-            const bJson = await bRes.json();
-            if (bJson && bJson.success && bJson.data) {
-              result = { success: true, ...bJson.data };
-              break;
-            }
-          }
-        } catch (bErr) {}
-      }
-    }
-
-    // 3. Direct Python Extractor (Fallback)
-    if (!result || !result.success) {
-      const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
-      const pyOpts = {
-        cwd: __dirname,
-        timeout: 15000,
-        maxBuffer: 20 * 1024 * 1024,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-      };
-
-      const pythonBins = ['python3', 'python', 'py'];
-      for (const bin of pythonBins) {
-        try {
-          const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
-          if (pyRes && pyRes.stdout) {
-            const parsed = JSON.parse(pyRes.stdout.trim());
-            if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
-              result = parsed;
-              break;
-            }
-          }
-        } catch (err) {}
-      }
-    }
+    const result = await extractInstagramFast(targetUrl);
 
     if (!result || !result.success) {
+      return res.status(400).json({ success: false, error: (result && result.error) || 'Unable to extract Instagram media. Please make sure the link is from a public post.' });
+    }
       return res.status(400).json({ success: false, error: (result && result.error) || 'Unable to extract Instagram media. Please make sure the link is from a public post.' });
     }
 
