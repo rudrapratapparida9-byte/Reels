@@ -168,138 +168,20 @@ app.get('/api/instagram', async (req, res) => {
 
   try {
     let result = null;
-    const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
-    const pyOpts = {
-      cwd: __dirname,
-      timeout: 35000,
-      maxBuffer: 20 * 1024 * 1024,
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-    };
+    const isCloudHost = Boolean(process.env.RENDER || process.env.EXTRACTION_BRIDGE_URL);
 
-    const pythonBins = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', 'py'];
-
-    // 1. Run dedicated extract_reel_audio.py across available Python binaries
-    for (const bin of pythonBins) {
-      try {
-        const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
-        if (pyRes && pyRes.stdout) {
-          const parsed = JSON.parse(pyRes.stdout.trim());
-          if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
-            result = parsed;
-            break;
-          }
-        }
-      } catch (err) {
-        // Continue to next binary
-      }
-    }
-
-    // 2. Direct yt-dlp execution fallback
-    if (!result || !result.success) {
-      const ytBaseArgs = [
-        '-j',
-        '--no-warnings',
-        '--no-check-certificates',
-        '--add-header', 'X-IG-App-ID: 936619743392459',
-        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        targetUrl
-      ];
-      const ytdlpCommands = [
-        { bin: path.join(__dirname, 'yt-dlp'), args: ytBaseArgs },
-        { bin: 'yt-dlp', args: ytBaseArgs },
-        { bin: 'python3', args: ['-m', 'yt_dlp', ...ytBaseArgs] },
-        { bin: 'python', args: ['-m', 'yt_dlp', ...ytBaseArgs] }
-      ];
-      for (const cmd of ytdlpCommands) {
-        try {
-          const ytRes = await execFileAsync(cmd.bin, cmd.args, pyOpts);
-          if (ytRes && ytRes.stdout) {
-            const ytJson = JSON.parse(ytRes.stdout.trim());
-            if (ytJson) {
-              const formats = ytJson.formats || [];
-              let audioUrl = null;
-              let dashVideoUrl = null;
-              let progressiveUrl = null;
-
-              for (const f of formats) {
-                const fid = String(f.format_id || '').toLowerCase();
-                const vcodec = String(f.vcodec || '').toLowerCase();
-                const acodec = String(f.acodec || '').toLowerCase();
-
-                // Dedicated Audio Track
-                if (fid.endsWith('a') || fid.includes('audio') || acodec.startsWith('mp4a') || acodec.startsWith('aac') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
-                  if (f.url) audioUrl = f.url;
-                }
-                // Dedicated Video Track
-                else if (fid.endsWith('v') || (vcodec && vcodec !== 'none' && (acodec === 'none' || !acodec))) {
-                  if (f.url) dashVideoUrl = f.url;
-                }
-                // True Progressive Video (contains BOTH video AND audio)
-                else if (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') {
-                  if (f.url) progressiveUrl = f.url;
-                }
-              }
-
-              let finalVideoUrl = null;
-              let finalAudioUrl = null;
-
-              if (dashVideoUrl && audioUrl) {
-                finalVideoUrl = dashVideoUrl;
-                finalAudioUrl = audioUrl;
-              } else if (progressiveUrl) {
-                finalVideoUrl = progressiveUrl;
-                finalAudioUrl = audioUrl || progressiveUrl;
-              } else {
-                if (dashVideoUrl && !audioUrl) {
-                  // Skip video-only DASH format so other scrapers or Instaloader can find the sound
-                  continue;
-                }
-                finalVideoUrl = dashVideoUrl || progressiveUrl || (ytJson.url || '');
-                finalAudioUrl = audioUrl || finalVideoUrl;
-              }
-
-              const uploader = ytJson.uploader || ytJson.uploader_id || 'instagram_creator';
-              const track = ytJson.track || ytJson.title || 'Original Audio';
-              const artist = ytJson.artist || uploader;
-              const shortcode = ytJson.id || cleanInstagramUrl(targetUrl).match(/\/(?:reel|p)\/([A-Za-z0-9_-]+)/)?.[1] || 'media';
-
-              result = {
-                success: true,
-                id: `insta_${shortcode}`,
-                shortcode: shortcode,
-                type: 'reel',
-                title: `Post by @${uploader}`,
-                username: `@${uploader}`,
-                caption: ytJson.description || '',
-                likes: ytJson.like_count ? Number(ytJson.like_count).toLocaleString() : 'Trending',
-                comments: ytJson.comment_count ? Number(ytJson.comment_count).toLocaleString() : 'Public',
-                is_video: true,
-                videoUrl: finalVideoUrl,
-                thumbnailUrl: ytJson.thumbnail || null,
-                images: ytJson.thumbnail ? [ytJson.thumbnail] : [],
-                audioTitle: ytJson.track ? `${artist} • ${track} (320kbps MP3)` : `@${uploader} • Original Audio (320kbps MP3)`,
-                audioUrl: finalAudioUrl,
-                duration: ytJson.duration ? `${Math.round(ytJson.duration)}s HD` : 'HD 1080p'
-              };
-              break;
-            }
-          }
-        } catch (ytErr) {}
-      }
-    }
-
-    // 3. High-Speed Tunnel Bridge Fallback (for Datacenter IP restrictions on Render)
-    if (!result || !result.success || (result.is_video && !result.audioUrl)) {
+    // 1. Fast Residential Bridge (Only active on Render/Cloud to bypass datacenter IP restrictions)
+    if (isCloudHost) {
       const bridgeUrls = [
-        'https://critical-balance-william-soldier.trycloudflare.com',
-        process.env.EXTRACTION_BRIDGE_URL
+        process.env.EXTRACTION_BRIDGE_URL,
+        'https://critical-balance-william-soldier.trycloudflare.com'
       ].filter(Boolean);
 
       for (const bridge of bridgeUrls) {
         try {
           const bRes = await fetch(`${bridge}/api/instagram?url=${encodeURIComponent(targetUrl)}`, {
             headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(12000)
+            signal: AbortSignal.timeout(6000)
           });
           if (bRes.ok) {
             const bJson = await bRes.json();
@@ -309,6 +191,31 @@ app.get('/api/instagram', async (req, res) => {
             }
           }
         } catch (bErr) {}
+      }
+    }
+
+    // 2. Direct Python Extractor (Fallback if bridge is unavailable)
+    if (!result || !result.success) {
+      const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+      const pyOpts = {
+        cwd: __dirname,
+        timeout: 10000,
+        maxBuffer: 20 * 1024 * 1024,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+      };
+
+      const pythonBins = ['python3', 'python', 'py'];
+      for (const bin of pythonBins) {
+        try {
+          const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
+          if (pyRes && pyRes.stdout) {
+            const parsed = JSON.parse(pyRes.stdout.trim());
+            if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
+              result = parsed;
+              break;
+            }
+          }
+        } catch (err) {}
       }
     }
 
