@@ -142,11 +142,12 @@ app.get('/api/instagram', async (req, res) => {
     // 4. Query residential bridge as last fallback
     if (!result || !result.success || result.username === '@instagram_creator') {
       const bridges = [
+        'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram',
         'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
       ];
       for (const bridge of bridges) {
         try {
-          const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(6000) });
+          const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(8000) });
           const bridgePayload = await bridgeRes.json();
           if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
             result = bridgePayload.data;
