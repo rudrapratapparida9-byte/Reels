@@ -177,75 +177,72 @@ def extract_with_ytdlp(url_or_shortcode):
     if not info:
         return None
             
-            formats = info.get('formats', [])
-            audio_url = None
-            dash_video_url = None
-            progressive_url = None
+    formats = info.get('formats', [])
+    audio_url = None
+    dash_video_url = None
+    progressive_url = None
 
-            for f in formats:
-                fid = str(f.get('format_id', '')).lower()
-                vcodec = str(f.get('vcodec', ''))
-                acodec = str(f.get('acodec', ''))
-                url = str(f.get('url', ''))
+    for f in formats:
+        fid = str(f.get('format_id', '')).lower()
+        vcodec = str(f.get('vcodec', '') or '').lower()
+        acodec = str(f.get('acodec', '') or '').lower()
+        f_url = str(f.get('url', ''))
 
-                if fid.endswith('a') or 'audio' in fid or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec)):
-                    if not audio_url and f.get('url'):
-                        audio_url = f.get('url')
-                elif fid.endswith('v') or (vcodec and vcodec != 'none' and acodec == 'none'):
-                    if f.get('url'):
-                        dash_video_url = f.get('url')
-                elif url and ('progressive' in url or 'recipe=1' in url or (not fid.endswith('v') and not fid.endswith('a'))):
-                    progressive_url = f.get('url')
+        # Dedicated Audio Track
+        if fid.endswith('a') or 'audio' in fid or acodec.startswith('mp4a') or acodec.startswith('aac') or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec)):
+            if f_url:
+                audio_url = f_url
+        # Video-Only DASH Track
+        elif fid.endswith('v') or (vcodec and vcodec != 'none' and (acodec == 'none' or not acodec)):
+            if f_url:
+                dash_video_url = f_url
+        # Combined Progressive Video (Contains BOTH video AND audio)
+        elif vcodec and vcodec != 'none' and acodec and acodec != 'none':
+            if f_url:
+                progressive_url = f_url
 
-            if not progressive_url and info.get('url'):
-                top_url = info.get('url')
-                if 'progressive' in top_url or 'recipe=1' in top_url:
-                    progressive_url = top_url
+    if dash_video_url and audio_url:
+        video_url = dash_video_url
+        final_audio_url = audio_url
+    elif progressive_url:
+        video_url = progressive_url
+        final_audio_url = audio_url or progressive_url
+    else:
+        video_url = dash_video_url or progressive_url or info.get('url')
+        final_audio_url = audio_url or video_url
 
-            if dash_video_url and audio_url:
-                video_url = dash_video_url
-                final_audio_url = audio_url
-            elif progressive_url:
-                video_url = progressive_url
-                final_audio_url = audio_url or progressive_url
-            else:
-                video_url = dash_video_url or info.get('url')
-                final_audio_url = audio_url or video_url
-                
-            shortcode = extract_shortcode(url_or_shortcode) or info.get('id', 'media')
-            uploader = info.get('uploader') or info.get('uploader_id') or 'instagram_creator'
-            track = info.get('track') or info.get('title') or 'Original Audio'
-            artist = info.get('artist') or uploader
+    shortcode = extract_shortcode(url_or_shortcode) or info.get('id', 'media')
+    uploader = info.get('uploader') or info.get('uploader_id') or 'instagram_creator'
+    track = info.get('track') or info.get('title') or 'Original Audio'
+    artist = info.get('artist') or uploader
 
-            if info.get('track'):
-                audio_title = f"{artist} • {track} (320kbps MP3)"
-            else:
-                audio_title = f"@{uploader} • Original Audio (320kbps MP3)"
+    if info.get('track'):
+        audio_title = f"{artist} • {track} (320kbps MP3)"
+    else:
+        audio_title = f"@{uploader} • Original Audio (320kbps MP3)"
 
-            thumbnail = info.get('thumbnail')
-            duration = info.get('duration')
-            duration_text = f"{round(duration)}s HD" if duration else "HD 1080p"
+    thumbnail = info.get('thumbnail')
+    duration = info.get('duration')
+    duration_text = f"{round(duration)}s HD" if duration else "HD 1080p"
 
-            return {
-                'success': True,
-                'id': f"insta_{shortcode}",
-                'shortcode': shortcode,
-                'type': 'reel' if (video_url or formats) else 'photo',
-                'title': f"Post by @{uploader}",
-                'username': f"@{uploader}",
-                'caption': info.get('description') or '',
-                'likes': f"{info.get('like_count', 0):,}" if info.get('like_count') else "Trending",
-                'comments': f"{info.get('comment_count', 0):,}" if info.get('comment_count') else "Public",
-                'is_video': bool(video_url),
-                'videoUrl': video_url or audio_url,
-                'thumbnailUrl': thumbnail,
-                'images': [thumbnail] if thumbnail else [],
-                'audioTitle': audio_title,
-                'audioUrl': audio_url or video_url,
-                'duration': duration_text
-            }
-    except Exception:
-        return None
+    return {
+        'success': True,
+        'id': f"insta_{shortcode}",
+        'shortcode': shortcode,
+        'type': 'reel' if (video_url or formats) else 'photo',
+        'title': f"Post by @{uploader}",
+        'username': f"@{uploader}",
+        'caption': info.get('description') or '',
+        'likes': f"{info.get('like_count', 0):,}" if info.get('like_count') else "Trending",
+        'comments': f"{info.get('comment_count', 0):,}" if info.get('comment_count') else "Public",
+        'is_video': bool(video_url),
+        'videoUrl': video_url or audio_url,
+        'thumbnailUrl': thumbnail,
+        'images': [thumbnail] if thumbnail else [],
+        'audioTitle': audio_title,
+        'audioUrl': final_audio_url,
+        'duration': duration_text
+    }
 
 def get_reel_audio_and_video(url_or_shortcode):
     """
