@@ -397,31 +397,9 @@ def extract_instagram_data(raw_input):
         if res_direct.get('success'):
             return res_direct
 
-    # CASE 5: Graceful fallback
-    eff_sc = shortcode or "sample"
-    tag_label = "Audio" if tag == 'audio' else ("Story" if tag == 'story' else ("Photo" if tag == 'photo' else "Reel"))
-    owner = story_username or "instagram_creator"
-    playable_media = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
-    playable_audio = "https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3"
-    thumb = "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80"
-
     return {
-        'success': True,
-        'id': f"insta_{eff_sc}",
-        'shortcode': eff_sc,
-        'type': tag or 'reel',
-        'title': f"Instagram {tag_label} by @{owner}",
-        'username': f"@{owner}",
-        'caption': f"Save this {tag_label.lower()} in 1080p Full HD without watermark. Tap the download buttons below to save video, audio MP3, or high-res cover.",
-        'likes': 'Trending',
-        'comments': 'Public',
-        'is_video': tag != 'photo' and tag != 'audio',
-        'videoUrl': playable_media if tag != 'photo' and tag != 'audio' else None,
-        'thumbnailUrl': thumb,
-        'images': [thumb],
-        'audioTitle': f"@{owner} • Original Audio (320kbps MP3)",
-        'audioUrl': playable_audio,
-        'duration': '0:35 HD' if tag == 'audio' else 'HD 1080p'
+        'success': False,
+        'error': 'Unable to parse Instagram link. Please ensure the link is a public Reel, Post, Story, or Audio.'
     }
 
 def main():

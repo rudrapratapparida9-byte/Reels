@@ -77,7 +77,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '3.7.0-mobile-cache-purge',
+    version: '3.8.0-zero-fallback-purity',
     time: new Date().toISOString()
   });
 });
@@ -418,11 +418,7 @@ app.get('/api/merge', (req, res) => {
   }
 });
 
-// 2. API: Media Stream & Proxy Route with Resilient Audio & Video Fallbacks
-const FALLBACK_AUDIO_URL = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
-const FALLBACK_VIDEO_URL = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
-const FALLBACK_IMAGE_URL = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80';
-
+// 2. API: Media Stream & Proxy Route
 app.get('/api/stream', (req, res) => {
   let streamUrl = req.query.url;
   const filename = req.query.filename || 'instagram_media.mp4';
@@ -432,19 +428,19 @@ app.get('/api/stream', (req, res) => {
   const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
   const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
   const defaultContentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
-  const fallbackUrl = isAudio ? FALLBACK_AUDIO_URL : isJpg ? FALLBACK_IMAGE_URL : FALLBACK_VIDEO_URL;
 
   if (!streamUrl) {
-    streamUrl = fallbackUrl;
+    return res.status(400).send('Missing media stream URL.');
   }
 
   // If a relative or nested /api/stream was passed, unwrap it
   if (streamUrl.startsWith('/api/stream')) {
     try {
       const parsed = new URL(streamUrl, 'http://localhost:5000');
-      streamUrl = parsed.searchParams.get('url') || fallbackUrl;
+      streamUrl = parsed.searchParams.get('url');
+      if (!streamUrl) return res.status(400).send('Invalid stream URL.');
     } catch (e) {
-      streamUrl = fallbackUrl;
+      return res.status(400).send('Invalid stream URL.');
     }
   }
 

@@ -37,7 +37,7 @@ def extract_shortcode(url_or_text):
     """Extract Instagram shortcode from URL."""
     if not url_or_text:
         return None
-    match = re.search(r'/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)', url_or_text)
+    match = re.search(r'(?:reel|reels|p|tv|share/reel|share/p|stories/[^/]+)/([A-Za-z0-9_-]+)', url_or_text)
     if match:
         return match.group(1)
     match2 = re.search(r'([A-Za-z0-9_-]{9,15})', url_or_text)
