@@ -223,22 +223,21 @@ app.get('/api/instagram', async (req, res) => {
 
               for (const f of formats) {
                 const fid = String(f.format_id || '').toLowerCase();
-                const vcodec = String(f.vcodec || '');
-                const acodec = String(f.acodec || '');
-                const url = String(f.url || '');
+                const vcodec = String(f.vcodec || '').toLowerCase();
+                const acodec = String(f.acodec || '').toLowerCase();
 
-                if (fid.endsWith('a') || fid.includes('audio') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
-                  if (!audioUrl && f.url) audioUrl = f.url;
-                } else if (fid.endsWith('v') || (vcodec && vcodec !== 'none' && acodec === 'none')) {
-                  if (f.url) dashVideoUrl = f.url;
-                } else if (url && (url.includes('progressive') || url.includes('recipe=1') || (!fid.endsWith('v') && !fid.endsWith('a')))) {
-                  progressiveUrl = f.url;
+                // Dedicated Audio Track
+                if (fid.endsWith('a') || fid.includes('audio') || acodec.startsWith('mp4a') || acodec.startsWith('aac') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
+                  if (f.url) audioUrl = f.url;
                 }
-              }
-
-              const topUrl = ytJson.url || '';
-              if (!progressiveUrl && topUrl && (topUrl.includes('progressive') || topUrl.includes('recipe=1'))) {
-                progressiveUrl = topUrl;
+                // Dedicated Video Track
+                else if (fid.endsWith('v') || (vcodec && vcodec !== 'none' && (acodec === 'none' || !acodec))) {
+                  if (f.url) dashVideoUrl = f.url;
+                }
+                // True Progressive Video (contains BOTH video AND audio)
+                else if (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') {
+                  if (f.url) progressiveUrl = f.url;
+                }
               }
 
               let finalVideoUrl = null;
@@ -251,7 +250,7 @@ app.get('/api/instagram', async (req, res) => {
                 finalVideoUrl = progressiveUrl;
                 finalAudioUrl = audioUrl || progressiveUrl;
               } else {
-                finalVideoUrl = dashVideoUrl || topUrl;
+                finalVideoUrl = dashVideoUrl || progressiveUrl || (ytJson.url || '');
                 finalAudioUrl = audioUrl || finalVideoUrl;
               }
 
