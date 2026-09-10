@@ -15,6 +15,9 @@ import io
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
+import socket
+socket.setdefaulttimeout(8)
+
 try:
     import instaloader
     L = instaloader.Instaloader(
@@ -34,9 +37,12 @@ except Exception:
     L = None
 
 def extract_shortcode(url_or_text):
-    """Extract Instagram shortcode from URL."""
+    """Extract Instagram shortcode from URL or audio URL."""
     if not url_or_text:
         return None
+    audio_match = re.search(r'(?:reels/audio|audio|music)/([0-9]+)', url_or_text)
+    if audio_match:
+        return audio_match.group(1)
     match = re.search(r'(?:reel|reels|p|tv|share/reel|share/p|stories/[^/]+)/([A-Za-z0-9_-]+)', url_or_text)
     if match:
         return match.group(1)
@@ -54,7 +60,12 @@ def extract_with_ytdlp(url_or_shortcode):
             'extract_flat': False
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            target_url = url_or_shortcode if url_or_shortcode.startswith('http') else f"https://www.instagram.com/reel/{url_or_shortcode}/"
+            if url_or_shortcode.startswith('http'):
+                target_url = url_or_shortcode
+            elif url_or_shortcode.isdigit():
+                target_url = f"https://www.instagram.com/reels/audio/{url_or_shortcode}/"
+            else:
+                target_url = f"https://www.instagram.com/reel/{url_or_shortcode}/"
             info = ydl.extract_info(target_url, download=False)
             if not info:
                 return None
@@ -130,11 +141,16 @@ def get_reel_audio_and_video(url_or_shortcode):
     """
     Extracts full video URL, thumbnail, and separate audio stream URL (with full sound).
     """
+    # 1. Primary: yt-dlp fast high-quality extraction
+    yt_data = extract_with_ytdlp(url_or_shortcode)
+    if yt_data and (yt_data.get('videoUrl') or yt_data.get('audioUrl')):
+        return yt_data
+
     shortcode = extract_shortcode(url_or_shortcode)
     if not shortcode:
         return {'success': False, 'error': 'Could not find a valid shortcode in URL'}
 
-    # 1. Primary extraction via Instaloader
+    # 2. Secondary: Instaloader fallback
     if L:
         try:
             post = instaloader.Post.from_shortcode(L.context, shortcode)
