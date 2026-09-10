@@ -80,7 +80,7 @@ app.use(express.static(path.join(__dirname, 'dist'), {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '5.2.0-dynamic-remux-sound',
+    version: '5.4.0-fast-bridge',
     cachedEntries: mediaCache.size,
     time: new Date().toISOString()
   });
