@@ -57,7 +57,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.6.0-dash-https',
+    version: '2.7.0-bridge-resolved',
     time: new Date().toISOString()
   });
 });
@@ -103,20 +103,24 @@ app.get('/api/instagram', async (req, res) => {
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     };
 
-    // 1. Query residential bridge first (bypasses datacenter IP blocks & extracts full separate DASH audio)
-    const bridges = [
-      'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram',
-      'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram'
-    ];
-    for (const bridge of bridges) {
-      try {
-        const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}`, 25000);
-        if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
-          result = bridgePayload.data;
-          break;
+    const isRender = Boolean(process.env.RENDER || process.env.RENDER_SERVICE_ID);
+
+    // 1. If running on Render, query residential bridge first (bypasses datacenter IP blocks & extracts full separate DASH audio)
+    if (isRender) {
+      const bridges = [
+        'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram',
+        'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram'
+      ];
+      for (const bridge of bridges) {
+        try {
+          const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}`, 25000);
+          if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
+            result = bridgePayload.data;
+            break;
+          }
+        } catch (bridgeErr) {
+          console.warn('Bridge error:', bridgeErr.message);
         }
-      } catch (bridgeErr) {
-        console.warn('Bridge error:', bridgeErr.message);
       }
     }
 
