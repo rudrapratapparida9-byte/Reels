@@ -888,7 +888,7 @@ export default function InstagramDownloader({
               /* VIEW 4: REELS VIDEO DOWNLOAD CARD */
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 sm:gap-8 items-center">
                 
-                {/* Left Column: 9:16 Vertical Reel Player */}
+                {/* Left Column: 9:16 Vertical Reel Player with Dual-Stream Audio Sync */}
                 <div className="md:col-span-5 flex justify-center">
                   <div className="relative w-full max-w-[280px] aspect-[9/16] bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-200">
                     <video
@@ -899,7 +899,37 @@ export default function InstagramDownloader({
                       controls
                       playsInline
                       loop
+                      onPlay={() => {
+                        if (audioPreviewRef.current && mediaData.audioUrl && mediaData.audioUrl !== mediaData.videoUrl) {
+                          audioPreviewRef.current.currentTime = videoPreviewRef.current?.currentTime || 0;
+                          audioPreviewRef.current.play().catch(() => {});
+                        }
+                      }}
+                      onPause={() => {
+                        if (audioPreviewRef.current) {
+                          audioPreviewRef.current.pause();
+                        }
+                      }}
+                      onSeeked={() => {
+                        if (audioPreviewRef.current && videoPreviewRef.current) {
+                          audioPreviewRef.current.currentTime = videoPreviewRef.current.currentTime;
+                        }
+                      }}
+                      onVolumeChange={() => {
+                        if (audioPreviewRef.current && videoPreviewRef.current) {
+                          audioPreviewRef.current.volume = videoPreviewRef.current.volume;
+                          audioPreviewRef.current.muted = videoPreviewRef.current.muted;
+                        }
+                      }}
                     />
+                    {mediaData.audioUrl && mediaData.audioUrl !== mediaData.videoUrl && (
+                      <audio
+                        ref={audioPreviewRef}
+                        src={mediaData.audioUrl}
+                        preload="auto"
+                        className="hidden"
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -912,6 +942,12 @@ export default function InstagramDownloader({
                     <h3 className="text-2xl font-black text-slate-900 font-['Outfit']">
                       {mediaData.username}
                     </h3>
+                    {mediaData.audioTitle && (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-purple-50 border border-purple-200 text-purple-700 text-xs font-bold">
+                        <Music className="w-3.5 h-3.5" />
+                        <span className="truncate max-w-[280px]">{mediaData.audioTitle}</span>
+                      </div>
+                    )}
                     <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
                       {mediaData.caption}
                     </p>
@@ -919,6 +955,7 @@ export default function InstagramDownloader({
 
                   {/* Actions */}
                   <div className="space-y-3 pt-2">
+                    {/* 1. Video Download Button */}
                     <button
                       onClick={() => handleDownload(mediaData.videoUrl, `${mediaData.id}_1080p.mp4`, 'video')}
                       disabled={downloadingKey === 'video'}
@@ -937,9 +974,30 @@ export default function InstagramDownloader({
                       )}
                     </button>
 
+                    {/* 2. Audio Track Download Button */}
+                    {mediaData.audioUrl && (
+                      <button
+                        onClick={() => handleDownload(mediaData.audioUrl, `${mediaData.id}_audio.mp3`, 'audio')}
+                        disabled={downloadingKey === 'audio'}
+                        className="w-full py-3.5 px-6 rounded-2xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 border border-purple-200 transition-all cursor-pointer disabled:opacity-60"
+                      >
+                        {downloadingKey === 'audio' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Extracting Audio Track...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Music className="w-4 h-4 text-purple-600" />
+                            <span>Download Audio Track (320kbps MP3)</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
                     <button
                       onClick={handleDownloadAgain}
-                      className="w-full py-3.5 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-slate-200 transition-colors cursor-pointer"
+                      className="w-full py-3 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-slate-200 transition-colors cursor-pointer"
                     >
                       <RefreshCw className="w-4 h-4 text-slate-600" />
                       <span>Download Another Video</span>
