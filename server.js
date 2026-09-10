@@ -100,7 +100,25 @@ function cleanInstagramUrl(rawUrl) {
   if (urlMatch) {
     url = urlMatch[0].startsWith('http') ? urlMatch[0] : `https://${urlMatch[0]}`;
   }
-  return url;
+
+  // Clean tracking queries and format canonical Instagram URLs
+  const postMatch = url.match(/\/(reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i);
+  if (postMatch) {
+    const type = postMatch[1].toLowerCase() === 'p' ? 'p' : 'reel';
+    return `https://www.instagram.com/${type}/${postMatch[2]}/`;
+  }
+
+  const audioMatch = url.match(/\/(reels\/audio|audio|music)\/([0-9]+)/i);
+  if (audioMatch) {
+    return `https://www.instagram.com/reels/audio/${audioMatch[2]}/`;
+  }
+
+  const storyMatch = url.match(/\/stories\/([^/?#]+)\/([0-9]+)/i);
+  if (storyMatch) {
+    return `https://www.instagram.com/stories/${storyMatch[1]}/${storyMatch[2]}/`;
+  }
+
+  return url.split('?')[0].split('#')[0].replace(/\/+$/, '') + '/';
 }
 
 // 1. API: Instagram Media Extraction

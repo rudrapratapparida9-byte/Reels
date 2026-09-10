@@ -19,25 +19,25 @@ export function extractInstagramInfo(rawInput) {
   // 1. Audio Link
   const audioMatch = withoutQuery.match(/(?:reels\/audio|audio|music)\/([0-9]+)/i);
   if (audioMatch) {
-    return { type: 'audio', shortcode: audioMatch[1], cleanUrl: clean, audioId: audioMatch[1] };
+    return { type: 'audio', shortcode: audioMatch[1], cleanUrl: `https://www.instagram.com/reels/audio/${audioMatch[1]}/`, audioId: audioMatch[1] };
   }
 
   // 2. Stories with Media ID
   const storyMatch = withoutQuery.match(/stories\/([^/]+)\/([0-9]+)/i);
   if (storyMatch) {
-    return { type: 'story', username: storyMatch[1], shortcode: storyMatch[2], cleanUrl: clean };
+    return { type: 'story', username: storyMatch[1], shortcode: storyMatch[2], cleanUrl: `https://www.instagram.com/stories/${storyMatch[1]}/${storyMatch[2]}/` };
   }
 
   // 3. Story Highlights
   const highlightMatch = withoutQuery.match(/stories\/highlights\/([0-9]+)/i);
   if (highlightMatch) {
-    return { type: 'story', username: 'highlight', shortcode: highlightMatch[1], cleanUrl: clean };
+    return { type: 'story', username: 'highlight', shortcode: highlightMatch[1], cleanUrl: `https://www.instagram.com/stories/highlights/${highlightMatch[1]}/` };
   }
 
   // 4. Story Username
   const storyUserMatch = withoutQuery.match(/stories\/([^/]+)/i);
   if (storyUserMatch) {
-    return { type: 'story', username: storyUserMatch[1], shortcode: storyUserMatch[1], cleanUrl: clean };
+    return { type: 'story', username: storyUserMatch[1], shortcode: storyUserMatch[1], cleanUrl: `https://www.instagram.com/stories/${storyUserMatch[1]}/` };
   }
 
   // 5. Reels & Posts
@@ -54,8 +54,10 @@ export function extractInstagramInfo(rawInput) {
   // 6. Share Links
   const shareMatch = withoutQuery.match(/\/share\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i);
   if (shareMatch) {
-    return { type: 'reel', shortcode: shareMatch[1], cleanUrl: clean };
+    return { type: 'reel', shortcode: shareMatch[1], cleanUrl: `https://www.instagram.com/reel/${shareMatch[1]}/` };
   }
+
+  return { type: 'reel', shortcode: 'media', cleanUrl: withoutQuery + '/' };
 
   // Generic fallback shortcode extraction
   const genericMatch = withoutQuery.match(/([A-Za-z0-9_-]{8,15})/);
