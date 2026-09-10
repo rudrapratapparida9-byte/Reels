@@ -90,9 +90,9 @@ function instagramApiPlugin() {
 
             const hasSeparateAudio = Boolean(result.audioUrl && result.videoUrl && result.audioUrl !== result.videoUrl);
 
-            const proxiedVideoUrl = hasSeparateAudio
-              ? `/api/merge?videoUrl=${encodeURIComponent(result.videoUrl)}&audioUrl=${encodeURIComponent(result.audioUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
-              : (result.videoUrl ? `/api/stream?url=${encodeURIComponent(result.videoUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true` : null);
+            const proxiedVideoUrl = result.videoUrl 
+              ? `/api/stream?url=${encodeURIComponent(result.videoUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true` 
+              : null;
 
             const proxiedAudioUrl = result.audioUrl 
               ? `/api/stream?url=${encodeURIComponent(result.audioUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`

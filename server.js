@@ -58,7 +58,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.9.0-success-key-fixed',
+    version: '3.0.0-video-stream-fixed',
     time: new Date().toISOString()
   });
 });
@@ -287,9 +287,9 @@ app.get('/api/instagram', async (req, res) => {
 
     const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
 
-    const proxiedVideoUrl = hasSeparateAudio
-      ? `/api/merge?videoUrl=${encodeURIComponent(rawVideo)}&audioUrl=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
-      : (rawVideo ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true` : null);
+    const proxiedVideoUrl = rawVideo 
+      ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
+      : null;
 
     const proxiedAudioUrl = rawAudio 
       ? `/api/stream?url=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
