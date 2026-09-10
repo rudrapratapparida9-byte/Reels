@@ -134,6 +134,7 @@ def extract_with_ytdlp(url_or_shortcode):
             'skip_download': True,
             'extract_flat': False,
             'nocheckcertificate': True,
+            'socket_timeout': 6,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                 'X-IG-App-ID': '936619743392459',
@@ -149,10 +150,11 @@ def extract_with_ytdlp(url_or_shortcode):
     # 2. Try standalone yt-dlp binary via subprocess
     if not info:
         import subprocess
+        base_dir = os.path.dirname(os.path.abspath(__file__))
         binaries = [
-            os.path.join(os.path.dirname(__file__), 'yt-dlp'),
-            './yt-dlp',
+            os.path.join(base_dir, 'yt-dlp'),
             'yt-dlp',
+            './yt-dlp',
             'yt-dlp.exe'
         ]
         for b in binaries:
@@ -165,11 +167,12 @@ def extract_with_ytdlp(url_or_shortcode):
                     '-j',
                     '--no-warnings',
                     '--no-check-certificates',
+                    '--socket-timeout', '6',
                     '--add-header', 'X-IG-App-ID: 936619743392459',
                     '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                     target_url
                 ]
-                out = subprocess.check_output(cmd, timeout=30, stderr=subprocess.DEVNULL)
+                out = subprocess.check_output(cmd, timeout=10, stderr=subprocess.DEVNULL)
                 if out:
                     info = json.loads(out.decode('utf-8', errors='replace').strip())
                     if info:
