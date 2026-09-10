@@ -387,8 +387,7 @@ app.get('/api/instagram', async (req, res) => {
     // 2. Fast Residential Bridge
     if ((!result || !result.success) && !isBridgeRequest) {
       const bridgeUrls = [
-        process.env.EXTRACTION_BRIDGE_URL,
-        'https://critical-balance-william-soldier.trycloudflare.com'
+        process.env.EXTRACTION_BRIDGE_URL
       ].filter(Boolean);
 
       for (const bridge of bridgeUrls) {

@@ -103,11 +103,23 @@ export default function InstagramDownloader({
   };
 
   const handleFetch = async (urlToFetch) => {
-    const targetUrl = (urlToFetch || urlInput).trim();
-    if (!targetUrl) {
+    let rawTarget = (urlToFetch || urlInput).trim();
+    if (!rawTarget) {
       setErrorMsg("Please paste a valid Instagram link.");
       inputRef.current?.focus();
       return;
+    }
+
+    // Auto-extract and sanitize valid Instagram URL even if concatenated or messy text was pasted
+    const urlMatch = rawTarget.match(/https?:\/\/(?:www\.)?(?:instagram\.com|instagr\.am|ig\.me)\/[^\s<>"']+/i) || 
+                     rawTarget.match(/https?:\/\/[^\s<>"']+/i) || 
+                     rawTarget.match(/(?:www\.)?(?:instagram\.com|instagr\.am|ig\.me)[^\s<>"']+/i);
+                     
+    let targetUrl = urlMatch ? (urlMatch[0].startsWith('http') ? urlMatch[0] : `https://${urlMatch[0]}`) : rawTarget;
+    
+    // Automatically sanitize the input field text for the user
+    if (targetUrl !== rawTarget && targetUrl.includes('instagram.com')) {
+      setUrlInput(targetUrl);
     }
 
     // Basic URL structure check
