@@ -621,6 +621,28 @@ export default function InstagramDownloader({
                         </div>
                       </button>
                     )}
+                    {/* Video Only option if available */}
+                    {mediaData.videoUrl && (
+                      <button
+                        onClick={() => handleDownload(mediaData.videoOnlyUrl || mediaData.videoUrl, `${mediaData.id}_video_only_mute.mp4`, 'video_only')}
+                        disabled={downloadingKey === 'video_only'}
+                        className="w-full py-3 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm flex items-center justify-between border border-slate-200 transition-all cursor-pointer disabled:opacity-60 group"
+                      >
+                        <div className="flex items-center gap-2">
+                          {downloadingKey === 'video_only' ? (
+                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                          ) : (
+                            <Film className="w-4 h-4 text-slate-600 shrink-0 group-hover:scale-110 transition-transform" />
+                          )}
+                          <span>
+                            {downloadingKey === 'video_only' ? 'Saving Video Only...' : 'Download Video Only (Muted / No Audio)'}
+                          </span>
+                        </div>
+                        <span className="hidden sm:inline-block text-[10px] uppercase font-black px-2 py-0.5 rounded-lg bg-slate-200 text-slate-700">
+                          Muted MP4
+                        </span>
+                      </button>
+                    )}
 
 
 
@@ -712,6 +734,32 @@ export default function InstagramDownloader({
                         </div>
                       )}
                     </button>
+                    {/* 2. Story Video Only (Muted) if video exists */}
+                    {mediaData.videoUrl && (
+                      <button
+                        onClick={() => {
+                          const fileUrl = mediaData.videoOnlyUrl || mediaData.videoUrl;
+                          const filename = `${mediaData.id}_story_video_only_mute.mp4`;
+                          handleDownload(fileUrl, filename, 'story_video_only');
+                        }}
+                        disabled={downloadingKey === 'story_video_only'}
+                        className="w-full py-3.5 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs sm:text-sm flex items-center justify-between border border-slate-200 transition-all cursor-pointer disabled:opacity-60 group"
+                      >
+                        <div className="flex items-center gap-2">
+                          {downloadingKey === 'story_video_only' ? (
+                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                          ) : (
+                            <Film className="w-4 h-4 text-slate-600 shrink-0 group-hover:scale-110 transition-transform" />
+                          )}
+                          <span>
+                            {downloadingKey === 'story_video_only' ? 'Saving Video Only...' : 'Download Story Video Only (Muted / No Audio)'}
+                          </span>
+                        </div>
+                        <span className="hidden sm:inline-block text-[10px] uppercase font-black px-2 py-0.5 rounded-lg bg-slate-200 text-slate-700">
+                          Muted MP4
+                        </span>
+                      </button>
+                    )}
 
 
 
@@ -1043,6 +1091,28 @@ export default function InstagramDownloader({
                       <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/20 text-white text-[11px] font-black uppercase tracking-wider backdrop-blur-sm">
                         <Volume2 className="w-3.5 h-3.5" />
                         <span>1080p HD + Sound</span>
+                      </div>
+                    </button>
+
+                    {/* 2. Secondary Button: Download Video Only (Muted / No Audio) */}
+                    <button
+                      onClick={() => handleDownload(mediaData.videoOnlyUrl || mediaData.videoUrl, `${mediaData.id}_video_only_mute.mp4`, 'video_only')}
+                      disabled={downloadingKey === 'video_only'}
+                      className="w-full py-3.5 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs sm:text-sm flex items-center justify-between border border-slate-200 shadow-sm transition-all cursor-pointer disabled:opacity-60 group"
+                    >
+                      <div className="flex items-center gap-2">
+                        {downloadingKey === 'video_only' ? (
+                          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        ) : (
+                          <Film className="w-4 h-4 text-slate-600 shrink-0 group-hover:scale-110 transition-transform" />
+                        )}
+                        <span className="font-bold text-slate-800">
+                          {downloadingKey === 'video_only' ? 'Saving Video Only...' : 'Download Video Only (Muted / No Audio)'}
+                        </span>
+                      </div>
+                      <div className="hidden sm:flex items-center gap-1 text-[10px] uppercase font-black px-2 py-0.5 rounded-lg bg-slate-200 text-slate-700">
+                        <VolumeX className="w-3 h-3 text-slate-500" />
+                        <span>Muted MP4</span>
                       </div>
                     </button>
 

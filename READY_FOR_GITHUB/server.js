@@ -477,7 +477,7 @@ app.get('/api/instagram', async (req, res) => {
       : null;
 
     const proxiedVideoOnlyUrl = rawVideo 
-      ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_video_only.mp4`)}&inline=true`
+      ? `/api/mute?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_muted.mp4`)}&inline=true`
       : null;
 
     const proxiedAudioUrl = rawAudio 
@@ -645,7 +645,95 @@ app.get('/api/merge', (req, res) => {
   });
 });
 
-// 3. API: Dedicated High-Quality 320kbps MP3 Audio Transcoder Route
+// 3. API: Muted Video Route (Strips all audio streams using FFmpeg -an)
+app.get('/api/mute', (req, res) => {
+  proxyThroughBridge(req, res, () => {
+    let rawVideo = req.query.url || req.query.videoUrl;
+    if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
+    let videoUrl = rawVideo ? String(rawVideo).trim() : '';
+
+    const rawFilename = req.query.filename;
+    const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_video_muted.mp4'));
+    const isInline = req.query.inline === 'true';
+    const isDownload = req.query.download === '1' || !isInline;
+
+    if (!videoUrl) {
+      return res.status(400).send('Missing video URL parameter');
+    }
+
+    // Unwrap nested proxy URLs if passed
+    if (videoUrl.includes('/api/stream?url=') || videoUrl.includes('/api/mute?url=')) {
+      try {
+        const parsed = new URL(videoUrl, `http://localhost:${PORT}`);
+        videoUrl = parsed.searchParams.get('url') || videoUrl;
+      } catch (e) {}
+    }
+    if (videoUrl.includes('%26') || videoUrl.includes('%3D')) {
+      videoUrl = videoUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
+    }
+
+    const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+    const disposition = isDownload ? 'attachment' : 'inline';
+
+    try {
+      const ffmpegBin = ffmpegPath || 'ffmpeg';
+      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\nOrigin: https://www.instagram.com\r\nAccept: */*\r\n';
+
+      const args = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-headers', headersStr,
+        '-i', videoUrl,
+        '-map', '0:v:0',
+        '-c:v', 'copy',
+        '-an',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-f', 'mp4',
+        'pipe:1'
+      ];
+
+      const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let hasSentData = false;
+
+      proc.stdout.on('data', (chunk) => {
+        if (!hasSentData) {
+          hasSentData = true;
+          res.setHeader('Content-Type', 'video/mp4');
+          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+        }
+        res.write(chunk);
+      });
+
+      proc.stdout.on('end', () => {
+        if (hasSentData) {
+          res.end();
+        } else if (!res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+        }
+      });
+
+      proc.on('error', (err) => {
+        if (!hasSentData && !res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+        }
+      });
+
+      req.on('close', () => {
+        try { proc.kill('SIGKILL'); } catch (e) {}
+      });
+    } catch (err) {
+      if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+      }
+    }
+  });
+});
+
+// 4. API: Dedicated High-Quality 320kbps MP3 Audio Transcoder Route
 app.get('/api/audio', (req, res) => {
   proxyThroughBridge(req, res, () => {
     let rawUrl = req.query.url;
