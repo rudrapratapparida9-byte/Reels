@@ -166,12 +166,12 @@ app.get('/api/instagram', async (req, res) => {
     return res.json(cached);
   }
 
-  try {
     let result = null;
-    const isCloudHost = req.hostname !== 'localhost' && req.hostname !== '127.0.0.1';
+    const hostHeader = (req.headers.host || '').toLowerCase();
+    const isLocalDirect = hostHeader.startsWith('localhost:5000') || hostHeader.startsWith('127.0.0.1:5000');
 
-    // 1. Fast Residential Bridge (Only active on Render/Cloud to bypass datacenter IP restrictions)
-    if (isCloudHost) {
+    // 1. Fast Residential Bridge (Active on Render / cloud hosts to bypass datacenter IP restrictions)
+    if (!isLocalDirect) {
       const bridgeUrls = [
         process.env.EXTRACTION_BRIDGE_URL,
         'https://critical-balance-william-soldier.trycloudflare.com'
