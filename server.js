@@ -84,6 +84,38 @@ app.get('/api/clear-cache', (req, res) => {
   res.json({ success: true, message: `Cleared ${count} cached media items.` });
 });
 
+app.get('/api/debug-ytdlp', async (req, res) => {
+  const targetUrl = cleanInstagramUrl(req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/');
+  const ytdlpCommands = [
+    { name: './yt-dlp', bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', targetUrl] },
+    { name: 'python3 extract', bin: 'python3', args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] },
+    { name: 'python3 yt_dlp', bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', targetUrl] }
+  ];
+
+  const results = [];
+  for (const cmd of ytdlpCommands) {
+    try {
+      const start = Date.now();
+      const execRes = await execFileAsync(cmd.bin, cmd.args, { cwd: __dirname, timeout: 20000 });
+      let parsed = null;
+      try { parsed = JSON.parse(execRes.stdout.trim()); } catch (e) {}
+      results.push({
+        name: cmd.name,
+        time: Date.now() - start,
+        success: true,
+        keys: parsed ? Object.keys(parsed) : null,
+        formats: parsed && parsed.formats ? parsed.formats.map(f => ({ id: f.format_id, acodec: f.acodec, vcodec: f.vcodec, url_prefix: f.url ? f.url.slice(0, 60) : null })) : null,
+        videoUrl: parsed ? (parsed.videoUrl || parsed.url) : null,
+        audioUrl: parsed ? parsed.audioUrl : null
+      });
+    } catch (err) {
+      results.push({ name: cmd.name, success: false, error: err.message });
+    }
+  }
+
+  res.json({ targetUrl, results });
+});
+
 function cleanInstagramUrl(rawUrl) {
   if (!rawUrl) return rawUrl;
   let url = rawUrl.trim();
