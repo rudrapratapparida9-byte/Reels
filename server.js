@@ -80,7 +80,7 @@ app.use(express.static(path.join(__dirname, 'dist'), {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '5.4.1-fast-bridge',
+    version: '5.4.2-seamless-bridge',
     cachedEntries: mediaCache.size,
     time: new Date().toISOString()
   });
@@ -123,6 +123,46 @@ app.get('/api/debug-ytdlp', async (req, res) => {
 
   res.json({ targetUrl, results });
 });
+
+const BRIDGE_URL = process.env.EXTRACTION_BRIDGE_URL || 'https://critical-balance-william-soldier.trycloudflare.com';
+
+function shouldBridge(req) {
+  const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
+  const reqHost = (req.headers.host || '').toLowerCase();
+  const isSelf = BRIDGE_URL.toLowerCase().includes(reqHost);
+  return !isBridgeRequest && !isSelf && Boolean(BRIDGE_URL);
+}
+
+function proxyThroughBridge(req, res, fallback) {
+  if (!shouldBridge(req)) {
+    return fallback();
+  }
+
+  const target = `${BRIDGE_URL}${req.originalUrl}${req.originalUrl.includes('?') ? '&' : '?'}nobridge=1`;
+  const bridgeReq = https.get(target, {
+    headers: {
+      ...req.headers,
+      'host': new URL(BRIDGE_URL).host,
+      'x-bridge-request': 'true'
+    },
+    timeout: 45000
+  }, (bridgeRes) => {
+    if (bridgeRes.statusCode < 400 || bridgeRes.headers['content-type']?.includes('video') || bridgeRes.headers['content-type']?.includes('audio') || bridgeRes.headers['content-type']?.includes('image')) {
+      res.writeHead(bridgeRes.statusCode, bridgeRes.headers);
+      return bridgeRes.pipe(res);
+    }
+    fallback();
+  });
+
+  bridgeReq.on('error', (err) => {
+    console.warn('Bridge proxy connection error, executing local fallback:', err.message);
+    fallback();
+  });
+
+  req.on('close', () => {
+    try { bridgeReq.destroy(); } catch (e) {}
+  });
+}
 
 function cleanInstagramUrl(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -324,198 +364,203 @@ app.get('/api/instagram', async (req, res) => {
 
 // 2. API: Merged Video + Audio Stream Route (Fast Multiplexing via FFmpeg)
 app.get('/api/merge', (req, res) => {
-  const videoUrl = req.query.videoUrl;
-  const audioUrl = req.query.audioUrl;
-  const filename = req.query.filename || 'instagram_reel_1080p.mp4';
-  const isInline = req.query.inline === 'true';
-  const isDownload = req.query.download === '1' || !isInline;
+  proxyThroughBridge(req, res, () => {
+    const videoUrl = req.query.videoUrl;
+    const audioUrl = req.query.audioUrl;
+    const filename = req.query.filename || 'instagram_reel_1080p.mp4';
+    const isInline = req.query.inline === 'true';
+    const isDownload = req.query.download === '1' || !isInline;
 
-  if (!videoUrl) {
-    return res.status(400).send('Missing videoUrl parameter');
-  }
-
-  // If no separate audio is provided, proxy the video directly
-  if (!audioUrl || audioUrl === videoUrl) {
-    return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-  }
-
-  const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
-  const disposition = isDownload ? 'attachment' : 'inline';
-
-  try {
-    const ffmpegBin = ffmpegPath || 'ffmpeg';
-    const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
-
-    const args = [
-      '-hide_banner',
-      '-loglevel', 'error',
-      '-headers', headersStr,
-      '-i', videoUrl,
-      '-headers', headersStr,
-      '-i', audioUrl,
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-b:a', '320k',
-      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-      '-f', 'mp4',
-      'pipe:1'
-    ];
-
-    const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let hasSentData = false;
-
-    proc.stdout.on('data', (chunk) => {
-      if (!hasSentData) {
-        hasSentData = true;
-        res.setHeader('Content-Type', 'video/mp4');
-        res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
-      }
-      res.write(chunk);
-    });
-
-    proc.stdout.on('end', () => {
-      if (hasSentData) {
-        res.end();
-      } else if (!res.headersSent) {
-        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
-      }
-    });
-
-    proc.on('error', (err) => {
-      console.warn('FFmpeg merge spawn failed, redirecting to raw stream:', err.message);
-      if (!hasSentData && !res.headersSent) {
-        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
-      }
-    });
-
-    req.on('close', () => {
-      try { proc.kill('SIGKILL'); } catch (e) {}
-    });
-  } catch (err) {
-    if (!res.headersSent) {
-      res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+    if (!videoUrl) {
+      return res.status(400).send('Missing videoUrl parameter');
     }
-  }
+
+    // If no separate audio is provided, proxy the video directly
+    if (!audioUrl || audioUrl === videoUrl) {
+      return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+    }
+
+    const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+    const disposition = isDownload ? 'attachment' : 'inline';
+
+    try {
+      const ffmpegBin = ffmpegPath || 'ffmpeg';
+      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
+
+      const args = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-headers', headersStr,
+        '-i', videoUrl,
+        '-headers', headersStr,
+        '-i', audioUrl,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '320k',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-f', 'mp4',
+        'pipe:1'
+      ];
+
+      const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let hasSentData = false;
+
+      proc.stdout.on('data', (chunk) => {
+        if (!hasSentData) {
+          hasSentData = true;
+          res.setHeader('Content-Type', 'video/mp4');
+          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+        }
+        res.write(chunk);
+      });
+
+      proc.stdout.on('end', () => {
+        if (hasSentData) {
+          res.end();
+        } else if (!res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+        }
+      });
+
+      proc.on('error', (err) => {
+        console.warn('FFmpeg merge spawn failed, redirecting to raw stream:', err.message);
+        if (!hasSentData && !res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+        }
+      });
+
+      req.on('close', () => {
+        try { proc.kill('SIGKILL'); } catch (e) {}
+      });
+    } catch (err) {
+      if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+      }
+    }
+  });
 });
 
 // 3. API: Dedicated High-Quality 320kbps MP3 Audio Transcoder Route
 app.get('/api/audio', (req, res) => {
-  let rawUrl = req.query.url;
-  if (Array.isArray(rawUrl)) rawUrl = rawUrl[0];
-  let audioUrl = rawUrl ? String(rawUrl) : '';
+  proxyThroughBridge(req, res, () => {
+    let rawUrl = req.query.url;
+    if (Array.isArray(rawUrl)) rawUrl = rawUrl[0];
+    let audioUrl = rawUrl ? String(rawUrl) : '';
 
-  const rawFilename = req.query.filename;
-  const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_audio.mp3'));
-  const isInline = req.query.inline === 'true';
-  const isDownload = req.query.download === '1' || !isInline;
+    const rawFilename = req.query.filename;
+    const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_audio.mp3'));
+    const isInline = req.query.inline === 'true';
+    const isDownload = req.query.download === '1' || !isInline;
 
-  if (!audioUrl) {
-    return res.status(400).send('Missing audio stream URL');
-  }
-
-  // Unwrap if nested stream URL
-  if (audioUrl.startsWith('/api/stream') || audioUrl.startsWith('/api/audio')) {
-    try {
-      const parsed = new URL(audioUrl, `http://localhost:${PORT}`);
-      audioUrl = parsed.searchParams.get('url') || audioUrl;
-    } catch (e) {}
-  }
-
-  const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
-  const disposition = (isInline && !isDownload) ? 'inline' : 'attachment';
-
-  try {
-    const ffmpegBin = ffmpegPath || 'ffmpeg';
-    const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
-
-    const args = [
-      '-hide_banner',
-      '-loglevel', 'error',
-      '-headers', headersStr,
-      '-i', audioUrl,
-      '-c:a', 'libmp3lame',
-      '-b:a', '320k',
-      '-f', 'mp3',
-      'pipe:1'
-    ];
-
-    const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let hasSentData = false;
-
-    proc.stdout.on('data', (chunk) => {
-      if (!hasSentData) {
-        hasSentData = true;
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
-      }
-      res.write(chunk);
-    });
-
-    proc.stdout.on('end', () => {
-      if (hasSentData) {
-        res.end();
-      } else if (!res.headersSent) {
-        res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-      }
-    });
-
-    proc.on('error', (err) => {
-      console.warn('FFmpeg audio transcode failed, falling back to raw stream:', err.message);
-      if (!hasSentData && !res.headersSent) {
-        res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-      }
-    });
-
-    req.on('close', () => {
-      try { proc.kill('SIGKILL'); } catch (e) {}
-    });
-  } catch (err) {
-    if (!res.headersSent) {
-      res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+    if (!audioUrl) {
+      return res.status(400).send('Missing audio stream URL');
     }
-  }
+
+    // Unwrap if nested stream URL
+    if (audioUrl.startsWith('/api/stream') || audioUrl.startsWith('/api/audio')) {
+      try {
+        const parsed = new URL(audioUrl, `http://localhost:${PORT}`);
+        audioUrl = parsed.searchParams.get('url') || audioUrl;
+      } catch (e) {}
+    }
+
+    const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+    const disposition = (isInline && !isDownload) ? 'inline' : 'attachment';
+
+    try {
+      const ffmpegBin = ffmpegPath || 'ffmpeg';
+      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
+
+      const args = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-headers', headersStr,
+        '-i', audioUrl,
+        '-c:a', 'libmp3lame',
+        '-b:a', '320k',
+        '-f', 'mp3',
+        'pipe:1'
+      ];
+
+      const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let hasSentData = false;
+
+      proc.stdout.on('data', (chunk) => {
+        if (!hasSentData) {
+          hasSentData = true;
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+        }
+        res.write(chunk);
+      });
+
+      proc.stdout.on('end', () => {
+        if (hasSentData) {
+          res.end();
+        } else if (!res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+        }
+      });
+
+      proc.on('error', (err) => {
+        console.warn('FFmpeg audio transcode failed, falling back to raw stream:', err.message);
+        if (!hasSentData && !res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+        }
+      });
+
+      req.on('close', () => {
+        try { proc.kill('SIGKILL'); } catch (e) {}
+      });
+    } catch (err) {
+      if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+      }
+    }
+  });
 });
 
-// 3. API: Media Stream & Proxy Route
+// 4. API: Media Stream & Proxy Route
 app.get('/api/stream', (req, res) => {
-  let rawStreamUrl = req.query.url;
-  if (Array.isArray(rawStreamUrl)) rawStreamUrl = rawStreamUrl[0];
-  let streamUrl = rawStreamUrl ? String(rawStreamUrl) : '';
+  proxyThroughBridge(req, res, () => {
+    let rawStreamUrl = req.query.url;
+    if (Array.isArray(rawStreamUrl)) rawStreamUrl = rawStreamUrl[0];
+    let streamUrl = rawStreamUrl ? String(rawStreamUrl) : '';
 
-  const rawFilename = req.query.filename;
-  const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_media.mp4'));
-  const isInline = req.query.inline === 'true';
-  const isDownload = req.query.download === '1' || !isInline;
+    const rawFilename = req.query.filename;
+    const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_media.mp4'));
+    const isInline = req.query.inline === 'true';
+    const isDownload = req.query.download === '1' || !isInline;
 
-  const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
-  const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
-  const defaultContentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
+    const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
+    const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
+    const defaultContentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
 
-  if (!streamUrl) {
-    return res.status(400).send('Missing media stream URL.');
-  }
-
-  // If a relative or nested /api/stream was passed, unwrap it
-  if (streamUrl.startsWith('/api/stream')) {
-    try {
-      const parsed = new URL(streamUrl, `http://localhost:${PORT}`);
-      streamUrl = parsed.searchParams.get('url') || '';
-      if (!streamUrl) return res.status(400).send('Invalid stream URL.');
-    } catch (e) {
-      return res.status(400).send('Invalid stream URL.');
+    if (!streamUrl) {
+      return res.status(400).send('Missing media stream URL.');
     }
-  }
 
-  // Normalize URL encoding (fix double-encoded & and = from CDN signatures)
-  if (streamUrl.includes('%26') || streamUrl.includes('%3D')) {
-    streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
-  }
+    // If a relative or nested /api/stream was passed, unwrap it
+    if (streamUrl.startsWith('/api/stream')) {
+      try {
+        const parsed = new URL(streamUrl, `http://localhost:${PORT}`);
+        streamUrl = parsed.searchParams.get('url') || '';
+        if (!streamUrl) return res.status(400).send('Invalid stream URL.');
+      } catch (e) {
+        return res.status(400).send('Invalid stream URL.');
+      }
+    }
+
+    // Normalize URL encoding (fix double-encoded & and = from CDN signatures)
+    if (streamUrl.includes('%26') || streamUrl.includes('%3D')) {
+      streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
+    }
 
   const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
     if (redirectCount > 5) {
@@ -609,7 +654,8 @@ app.get('/api/stream', (req, res) => {
     }
   };
 
-  fetchWithRedirects(streamUrl);
+    fetchWithRedirects(streamUrl);
+  });
 });
 
 // Single Page Application Fallback Middleware (Express 5 safe)
