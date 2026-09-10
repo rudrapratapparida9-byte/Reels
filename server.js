@@ -168,11 +168,10 @@ app.get('/api/instagram', async (req, res) => {
 
   try {
     let result = null;
-    const hostHeader = (req.headers.host || '').toLowerCase();
-    const isLocalDirect = hostHeader.startsWith('localhost:5000') || hostHeader.startsWith('127.0.0.1:5000');
+    const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
 
     // 1. Fast Residential Bridge (Active on Render / cloud hosts to bypass datacenter IP restrictions)
-    if (!isLocalDirect) {
+    if (!isBridgeRequest) {
       const bridgeUrls = [
         process.env.EXTRACTION_BRIDGE_URL,
         'https://critical-balance-william-soldier.trycloudflare.com'
@@ -180,9 +179,9 @@ app.get('/api/instagram', async (req, res) => {
 
       for (const bridge of bridgeUrls) {
         try {
-          const bRes = await fetch(`${bridge}/api/instagram?url=${encodeURIComponent(targetUrl)}`, {
-            headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(6000)
+          const bRes = await fetch(`${bridge}/api/instagram?url=${encodeURIComponent(targetUrl)}&nobridge=1`, {
+            headers: { 'Accept': 'application/json', 'X-Bridge-Request': 'true' },
+            signal: AbortSignal.timeout(8000)
           });
           if (bRes.ok) {
             const bJson = await bRes.json();
