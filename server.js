@@ -226,8 +226,17 @@ app.get('/api/instagram', async (req, res) => {
                 }
               }
 
-              if (!videoUrl) {
-                videoUrl = ytJson.url;
+              const topUrl = ytJson.url || '';
+              if (!videoUrl && topUrl) {
+                videoUrl = topUrl;
+              }
+
+              if (!audioUrl) {
+                if (topUrl.includes('xpv_progressive') || topUrl.includes('progressive_recipe=1')) {
+                  audioUrl = topUrl;
+                } else if (videoUrl && (videoUrl.includes('xpv_progressive') || videoUrl.includes('progressive_recipe=1'))) {
+                  audioUrl = videoUrl;
+                }
               }
 
               const uploader = ytJson.uploader || ytJson.uploader_id || 'instagram_creator';
