@@ -66,6 +66,19 @@ app.use((req, res, next) => {
   next();
 });
 
+// Explicit ads.txt and robots.txt handlers
+app.get('/ads.txt', (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send('google.com, pub-6931746397574530, DIRECT, f08c47fec0942fa0\n');
+});
+
+app.get('/robots.txt', (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send("User-agent: *\nAllow: /\nSitemap: https://reels-1-nvfo.onrender.com/sitemap.xml\n");
+});
+
 app.use(express.static(path.join(__dirname, 'dist'), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('index.html')) {
