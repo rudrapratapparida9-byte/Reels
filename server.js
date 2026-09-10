@@ -20,7 +20,7 @@ app.use(express.static(path.join(__dirname, 'dist')));
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.4.0-dash-audio',
+    version: '2.5.0-dash-live',
     time: new Date().toISOString()
   });
 });
@@ -57,12 +57,17 @@ app.get('/api/instagram', async (req, res) => {
 
     // 1. Query residential bridge first (bypasses datacenter IP blocks & extracts full separate DASH audio)
     const bridges = [
-      'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram',
-      'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
+      'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram',
+      'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram'
     ];
     for (const bridge of bridges) {
       try {
-        const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(20000) });
+        const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          signal: AbortSignal.timeout(20000)
+        });
         if (bridgeRes.ok) {
           const bridgePayload = await bridgeRes.json();
           if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
