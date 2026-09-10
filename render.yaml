@@ -3,7 +3,7 @@ services:
     name: reelsvault
     runtime: node
     plan: free
-    buildCommand: npm install && pip install yt-dlp instaloader && npm run build
+    buildCommand: pip3 install --break-system-packages --no-cache-dir yt-dlp instaloader || pip install --break-system-packages --no-cache-dir yt-dlp instaloader || true; npm install && npm run build
     startCommand: node server.js
     envVars:
       - key: NODE_ENV

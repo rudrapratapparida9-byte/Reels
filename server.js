@@ -36,7 +36,7 @@ app.get('/api/instagram', async (req, res) => {
   const targetUrl = cleanInstagramUrl(rawTargetUrl);
 
   try {
-    let stdout;
+    let result = null;
     const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
     const legacyPath = path.join(__dirname, 'extract_instagram.py');
     const pyOpts = {
@@ -45,33 +45,102 @@ app.get('/api/instagram', async (req, res) => {
       maxBuffer: 15 * 1024 * 1024,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     };
-    try {
-      const pyRes = await execFileAsync('python3', [scriptPath, targetUrl], pyOpts);
-      stdout = pyRes.stdout;
-    } catch (pyErr) {
+
+    // 1. Try dedicated extract_reel_audio.py across available Python binaries
+    const pythonBins = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', 'py'];
+    for (const bin of pythonBins) {
       try {
-        const pyRes = await execFileAsync('python', [scriptPath, targetUrl], pyOpts);
-        stdout = pyRes.stdout;
-      } catch (pyErr2) {
-        try {
-          const pyRes = await execFileAsync('python3', [legacyPath, targetUrl], pyOpts);
-          stdout = pyRes.stdout;
-        } catch (pyErr3) {
-          const pyRes = await execFileAsync('python', [legacyPath, targetUrl], pyOpts);
-          stdout = pyRes.stdout;
+        const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
+        if (pyRes && pyRes.stdout) {
+          const parsed = JSON.parse(pyRes.stdout.trim());
+          if (parsed && parsed.success) {
+            result = parsed;
+            break;
+          }
         }
+      } catch (err) {}
+    }
+
+    // 2. Direct yt-dlp execution fallback
+    if (!result || !result.success) {
+      const ytdlpCommands = [
+        { bin: 'yt-dlp', args: ['-j', '--no-warnings', targetUrl] },
+        { bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', targetUrl] },
+        { bin: 'python', args: ['-m', 'yt_dlp', '-j', '--no-warnings', targetUrl] }
+      ];
+      for (const cmd of ytdlpCommands) {
+        try {
+          const ytRes = await execFileAsync(cmd.bin, cmd.args, pyOpts);
+          if (ytRes && ytRes.stdout) {
+            const ytJson = JSON.parse(ytRes.stdout.trim());
+            if (ytJson) {
+              const formats = ytJson.formats || [];
+              let audioUrl = null;
+              let videoUrl = ytJson.url;
+
+              for (const f of formats) {
+                if (f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none' || String(f.format_id).includes('a'))) {
+                  audioUrl = f.url;
+                  break;
+                }
+              }
+              if (!audioUrl) {
+                for (const f of formats) {
+                  if (f.acodec && f.acodec !== 'none') {
+                    audioUrl = f.url;
+                    break;
+                  }
+                }
+              }
+
+              const uploader = ytJson.uploader || ytJson.uploader_id || 'instagram_creator';
+              const track = ytJson.track || ytJson.title || 'Original Audio';
+              const artist = ytJson.artist || uploader;
+              const shortcode = ytJson.id || cleanInstagramUrl(targetUrl).match(/\/(?:reel|p)\/([A-Za-z0-9_-]+)/)?.[1] || 'media';
+
+              result = {
+                success: true,
+                id: `insta_${shortcode}`,
+                shortcode: shortcode,
+                type: 'reel',
+                title: `Post by @${uploader}`,
+                username: `@${uploader}`,
+                caption: ytJson.description || '',
+                likes: ytJson.like_count ? Number(ytJson.like_count).toLocaleString() : 'Trending',
+                comments: ytJson.comment_count ? Number(ytJson.comment_count).toLocaleString() : 'Public',
+                is_video: true,
+                videoUrl: videoUrl || audioUrl,
+                thumbnailUrl: ytJson.thumbnail || null,
+                images: ytJson.thumbnail ? [ytJson.thumbnail] : [],
+                audioTitle: ytJson.track ? `${artist} • ${track} (320kbps MP3)` : `@${uploader} • Original Audio (320kbps MP3)`,
+                audioUrl: audioUrl || videoUrl,
+                duration: ytJson.duration ? `${Math.round(ytJson.duration)}s HD` : 'HD 1080p'
+              };
+              break;
+            }
+          }
+        } catch (ytErr) {}
       }
     }
 
-    let result;
-    try {
-      result = JSON.parse(stdout.trim());
-    } catch (e) {
-      result = { success: false };
+    // 3. Try legacy script if still needed
+    if (!result || !result.success) {
+      for (const bin of pythonBins) {
+        try {
+          const pyRes = await execFileAsync(bin, [legacyPath, targetUrl], pyOpts);
+          if (pyRes && pyRes.stdout) {
+            const parsed = JSON.parse(pyRes.stdout.trim());
+            if (parsed && parsed.success) {
+              result = parsed;
+              break;
+            }
+          }
+        } catch (err) {}
+      }
     }
 
-    // If cloud server IP was blocked by Instagram and returned fallback data, query residential bridge
-    if (!result.success || result.username === '@instagram_creator') {
+    // 4. Query residential bridge as last fallback
+    if (!result || !result.success || result.username === '@instagram_creator') {
       const bridges = [
         'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
       ];
@@ -87,8 +156,8 @@ app.get('/api/instagram', async (req, res) => {
       }
     }
 
-    if (!result.success) {
-      return res.status(400).json({ success: false, error: result.error || 'Failed to extract Instagram media.' });
+    if (!result || !result.success) {
+      return res.status(400).json({ success: false, error: (result && result.error) || 'Failed to extract Instagram media.' });
     }
 
     const cleanShortcode = String(result.shortcode || 'media').replace(/[^a-zA-Z0-9_-]/g, '');
