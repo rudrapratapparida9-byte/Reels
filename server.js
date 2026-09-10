@@ -152,13 +152,13 @@ app.get('/api/instagram', async (req, res) => {
       ];
       for (const bridge of bridges) {
         try {
-          const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}&from_bridge=1`, 25000);
+          const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}&from_bridge=1`, 4500);
           if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
             result = { ...bridgePayload.data, success: true };
             break;
           }
         } catch (bridgeErr) {
-          console.warn('Bridge error:', bridgeErr.message);
+          console.warn('Bridge error or timeout:', bridgeErr.message);
         }
       }
     }

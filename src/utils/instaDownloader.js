@@ -74,22 +74,33 @@ export function extractInstagramInfo(rawInput) {
  * PRIMARY ENGINE: Local Backend /api/instagram API (Powered by Python Backend)
  */
 async function fetchViaBackendApi(targetUrl) {
-  try {
-    const res = await fetch(`/api/instagram?url=${encodeURIComponent(targetUrl)}`);
-    const result = await res.json().catch(() => null);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-    if (res.ok && result && result.success && result.data) {
-      return result.data;
-    }
+      const res = await fetch(`/api/instagram?url=${encodeURIComponent(targetUrl)}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
 
-    if (result && result.error) {
-      throw new Error(result.error);
+      const result = await res.json().catch(() => null);
+
+      if (res.ok && result && result.success && result.data) {
+        return result.data;
+      }
+
+      if (result && result.error) {
+        throw new Error(result.error);
+      }
+    } catch (e) {
+      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('abort')) {
+        throw e;
+      }
+      if (attempt === 1) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
     }
-  } catch (e) {
-    if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch')) {
-      throw e;
-    }
-    console.warn("Backend API not reachable, falling back to external scrapers:", e.message);
   }
   return null;
 }
