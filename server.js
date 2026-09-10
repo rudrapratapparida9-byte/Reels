@@ -94,21 +94,41 @@ app.get('/api/instagram', async (req, res) => {
             if (ytJson) {
               const formats = ytJson.formats || [];
               let audioUrl = null;
-              let videoUrl = ytJson.url;
+              let videoUrl = null;
 
               for (const f of formats) {
-                if (f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none' || String(f.format_id).includes('a'))) {
-                  audioUrl = f.url;
-                  break;
-                }
-              }
-              if (!audioUrl) {
-                for (const f of formats) {
-                  if (f.acodec && f.acodec !== 'none') {
+                const fid = String(f.format_id || '');
+                const vcodec = String(f.vcodec || '');
+                const acodec = String(f.acodec || '');
+                if (fid.endsWith('a') || fid.toLowerCase().includes('_audio') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
+                  if (!audioUrl) {
                     audioUrl = f.url;
                     break;
                   }
                 }
+              }
+              if (!audioUrl) {
+                for (const f of formats) {
+                  const acodec = String(f.acodec || '');
+                  if (acodec && acodec !== 'none') {
+                    audioUrl = f.url;
+                    break;
+                  }
+                }
+              }
+
+              for (let i = formats.length - 1; i >= 0; i--) {
+                const f = formats[i];
+                const fid = String(f.format_id || '');
+                const vcodec = String(f.vcodec || '');
+                if (vcodec !== 'none' && !fid.endsWith('a')) {
+                  videoUrl = f.url;
+                  break;
+                }
+              }
+
+              if (!videoUrl) {
+                videoUrl = ytJson.url;
               }
 
               const uploader = ytJson.uploader || ytJson.uploader_id || 'instagram_creator';

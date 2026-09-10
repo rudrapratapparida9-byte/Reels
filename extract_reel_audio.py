@@ -61,24 +61,35 @@ def extract_with_ytdlp(url_or_shortcode):
             
             formats = info.get('formats', [])
             audio_url = None
-            video_url = info.get('url')
+            video_url = None
             
-            # Find separate audio stream (acodec != 'none' and (vcodec == 'none' or 'dash' in format_id))
+            # Find separate audio stream (audio-only DASH stream or format ending with 'a')
             for f in formats:
-                acodec = f.get('acodec')
-                vcodec = f.get('vcodec')
-                if acodec and acodec != 'none' and (not vcodec or vcodec == 'none' or 'a' in f.get('format_id', '')):
-                    audio_url = f.get('url')
-                    break
+                fid = str(f.get('format_id', ''))
+                vcodec = str(f.get('vcodec', ''))
+                acodec = str(f.get('acodec', ''))
+                if fid.endswith('a') or '_audio' in fid.lower() or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec)):
+                    if not audio_url:
+                        audio_url = f.get('url')
+                        break
             
             if not audio_url:
                 for f in formats:
-                    if f.get('acodec') and f.get('acodec') != 'none':
+                    acodec = str(f.get('acodec', ''))
+                    if acodec and acodec != 'none':
                         audio_url = f.get('url')
                         break
 
-            if not video_url and formats:
-                video_url = formats[-1].get('url')
+            # Find best progressive video or video stream
+            for f in reversed(formats):
+                fid = str(f.get('format_id', ''))
+                vcodec = str(f.get('vcodec', ''))
+                if vcodec != 'none' and not fid.endswith('a'):
+                    video_url = f.get('url')
+                    break
+
+            if not video_url:
+                video_url = info.get('url')
                 
             shortcode = extract_shortcode(url_or_shortcode) or info.get('id', 'media')
             uploader = info.get('uploader') or info.get('uploader_id') or 'instagram_creator'
