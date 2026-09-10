@@ -193,13 +193,36 @@ app.get('/api/instagram', async (req, res) => {
           return streamOrRawUrl;
         }
       }
+      if (streamOrRawUrl.startsWith('/api/merge') || streamOrRawUrl.includes('/api/merge?')) {
+        try {
+          const u = new URL(streamOrRawUrl, 'http://localhost');
+          return u.searchParams.get('videoUrl') || streamOrRawUrl;
+        } catch (e) {
+          return streamOrRawUrl;
+        }
+      }
       return streamOrRawUrl;
     }
 
     const cleanShortcode = String(result.shortcode || 'media').replace(/[^a-zA-Z0-9_-]/g, '');
 
-    const rawVideo = extractRawUrl(result.videoUrl);
-    const rawAudio = extractRawUrl(result.audioUrl);
+    let rawVideo = null;
+    let rawAudio = null;
+
+    if (result.videoUrl && typeof result.videoUrl === 'string' && (result.videoUrl.startsWith('/api/merge') || result.videoUrl.includes('/api/merge?'))) {
+      try {
+        const u = new URL(result.videoUrl, 'http://localhost');
+        rawVideo = u.searchParams.get('videoUrl');
+        rawAudio = u.searchParams.get('audioUrl');
+      } catch (e) {}
+    }
+
+    if (!rawVideo) {
+      rawVideo = extractRawUrl(result.videoUrl);
+    }
+    if (!rawAudio) {
+      rawAudio = extractRawUrl(result.audioUrl);
+    }
     const rawThumb = extractRawUrl(result.thumbnailUrl);
 
     const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
