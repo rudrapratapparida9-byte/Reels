@@ -692,7 +692,7 @@ app.get('/api/merge', async (req, res) => {
     const stat = fs.statSync(tempOutput);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', stat.size);
-    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
@@ -777,7 +777,7 @@ app.get('/api/mute', async (req, res) => {
     const stat = fs.statSync(tempOutput);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', stat.size);
-    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
@@ -846,7 +846,7 @@ app.get('/api/audio', (req, res) => {
         if (!hasSentData) {
           hasSentData = true;
           res.setHeader('Content-Type', 'audio/mpeg');
-          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
           res.setHeader('Access-Control-Allow-Origin', '*');
           res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
           res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
@@ -983,7 +983,7 @@ app.get('/api/stream', (req, res) => {
         if (isInline && !isDownload) {
           res.setHeader('Content-Disposition', 'inline');
         } else {
-          res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+          res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
         }
 
         proxyRes.pipe(res);
