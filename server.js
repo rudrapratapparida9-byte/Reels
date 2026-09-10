@@ -37,24 +37,27 @@ app.get('/api/instagram', async (req, res) => {
 
   try {
     let stdout;
+    const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+    const legacyPath = path.join(__dirname, 'extract_instagram.py');
     const pyOpts = {
+      cwd: __dirname,
       timeout: 30000,
       maxBuffer: 15 * 1024 * 1024,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     };
     try {
-      const pyRes = await execFileAsync('python3', ['extract_reel_audio.py', targetUrl], pyOpts);
+      const pyRes = await execFileAsync('python3', [scriptPath, targetUrl], pyOpts);
       stdout = pyRes.stdout;
     } catch (pyErr) {
       try {
-        const pyRes = await execFileAsync('python', ['extract_reel_audio.py', targetUrl], pyOpts);
+        const pyRes = await execFileAsync('python', [scriptPath, targetUrl], pyOpts);
         stdout = pyRes.stdout;
       } catch (pyErr2) {
         try {
-          const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], pyOpts);
+          const pyRes = await execFileAsync('python3', [legacyPath, targetUrl], pyOpts);
           stdout = pyRes.stdout;
         } catch (pyErr3) {
-          const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], pyOpts);
+          const pyRes = await execFileAsync('python', [legacyPath, targetUrl], pyOpts);
           stdout = pyRes.stdout;
         }
       }
