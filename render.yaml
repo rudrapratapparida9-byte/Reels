@@ -4,9 +4,11 @@ services:
     runtime: node
     plan: free
     buildCommand: curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp && chmod a+rx yt-dlp || true; pip3 install --break-system-packages yt-dlp || pip install yt-dlp || true; npm install && npm run build
-    startCommand: node server.js
+    startCommand: node --max-old-space-size=300 server.js
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=300
       - key: PORT
         value: 10000

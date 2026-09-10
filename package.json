@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server.js",
+    "start": "node --max-old-space-size=300 server.js",
     "postinstall": "chmod -R 755 ./node_modules/ffmpeg-static || true"
   },
   "dependencies": {

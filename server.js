@@ -39,7 +39,7 @@ function getCached(key) {
 }
 
 function setCached(key, data) {
-  if (mediaCache.size > 500) {
+  if (mediaCache.size > 40) {
     const oldestKey = mediaCache.keys().next().value;
     mediaCache.delete(oldestKey);
   }
@@ -347,7 +347,7 @@ async function extractInstagramFast(targetUrl) {
     '--add-header', 'Accept-Language: en-US,en;q=0.9'
   ];
 
-  // Worker 1: Direct Python Extractor
+  // Worker 1: Direct Python Extractor (Fast & Ultra-Lightweight ~25MB RAM)
   const runPythonWorker = async () => {
     const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
     const bins = ['python3', 'python', 'py'];
@@ -355,8 +355,8 @@ async function extractInstagramFast(targetUrl) {
       try {
         const res = await execFileAsync(b, [scriptPath, targetUrl], {
           cwd: __dirname,
-          timeout: 10000,
-          maxBuffer: 25 * 1024 * 1024,
+          timeout: 8000,
+          maxBuffer: 8 * 1024 * 1024,
           env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
         });
         if (res && res.stdout) {
@@ -367,17 +367,17 @@ async function extractInstagramFast(targetUrl) {
         }
       } catch (e) {}
     }
-    throw new Error('Python worker failed');
+    return null;
   };
 
-  // Worker 2: Standalone yt-dlp binary
+  // Worker 2: Standalone yt-dlp binary (Fallback)
   const runYtdlpWorker = async () => {
     const ytdlpBin = path.join(__dirname, 'yt-dlp');
     const bins = fs.existsSync(ytdlpBin) ? [ytdlpBin, 'yt-dlp'] : ['yt-dlp'];
     for (const b of bins) {
       try {
         const args = ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '6', ...commonHeaders, targetUrl];
-        const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 10000, maxBuffer: 30 * 1024 * 1024 });
+        const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 8000, maxBuffer: 10 * 1024 * 1024 });
         if (res && res.stdout) {
           const info = JSON.parse(res.stdout.trim());
           const parsed = parseYtdlpInfo(info, targetUrl);
@@ -387,17 +387,21 @@ async function extractInstagramFast(targetUrl) {
         }
       } catch (e) {}
     }
-    throw new Error('yt-dlp worker failed');
+    return null;
   };
 
-  // Run both concurrently - whichever completes first (in 2-3s) returns immediately!
+  // Memory-Safe Sequential Execution (Runs Python in 2s, avoids concurrent RAM spikes)
   try {
-    return await Promise.any([runPythonWorker(), runYtdlpWorker()]);
-  } catch (err) {
-    try { return await runPythonWorker(); } catch (e) {}
-    try { return await runYtdlpWorker(); } catch (e) {}
-    return null;
-  }
+    const pyResult = await runPythonWorker();
+    if (pyResult && pyResult.success) return pyResult;
+  } catch (e) {}
+
+  try {
+    const ytResult = await runYtdlpWorker();
+    if (ytResult && ytResult.success) return ytResult;
+  } catch (e) {}
+
+  return null;
 }
 
 // 1. API: Instagram Media Extraction
