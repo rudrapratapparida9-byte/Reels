@@ -204,30 +204,54 @@ function cleanInstagramUrl(rawUrl) {
   return url.split('?')[0].split('#')[0].replace(/\/+$/, '') + '/';
 }
 
+function downloadFileRecursive(targetUrl, destPath) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(targetUrl);
+    const client = parsed.protocol === 'https:' ? https : http;
+
+    client.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        let redirectUrl = res.headers.location;
+        if (!redirectUrl.startsWith('http')) {
+          redirectUrl = new URL(redirectUrl, targetUrl).href;
+        }
+        return downloadFileRecursive(redirectUrl, destPath).then(resolve).catch(reject);
+      }
+
+      if (res.statusCode !== 200) {
+        return reject(new Error(`Download failed with HTTP ${res.statusCode}`));
+      }
+
+      const fileStream = fs.createWriteStream(destPath);
+      res.pipe(fileStream);
+      fileStream.on('finish', () => {
+        fileStream.close();
+        resolve(destPath);
+      });
+      fileStream.on('error', (err) => {
+        try { fs.unlinkSync(destPath); } catch (e) {}
+        reject(err);
+      });
+    }).on('error', reject);
+  });
+}
+
 // Automatically ensure yt-dlp binary is downloaded and executable on Linux (Render / Cloud hosts)
 async function ensureYtdlpBinary() {
   if (process.platform !== 'linux') return;
   const targetPath = path.join(__dirname, 'yt-dlp');
   if (fs.existsSync(targetPath)) {
-    try { fs.chmodSync(targetPath, 0o755); } catch (e) {}
-    return;
+    try {
+      const stats = fs.statSync(targetPath);
+      if (stats.size > 1000000) {
+        fs.chmodSync(targetPath, 0o755);
+        return;
+      }
+    } catch (e) {}
   }
   console.log('Downloading standalone yt-dlp binary for Linux...');
   try {
-    const file = fs.createWriteStream(targetPath);
-    await new Promise((resolve, reject) => {
-      https.get('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp', (res) => {
-        if (res.statusCode === 302 || res.statusCode === 301) {
-          https.get(res.headers.location, (res2) => {
-            res2.pipe(file);
-            file.on('finish', () => { file.close(); resolve(); });
-          }).on('error', reject);
-        } else {
-          res.pipe(file);
-          file.on('finish', () => { file.close(); resolve(); });
-        }
-      }).on('error', reject);
-    });
+    await downloadFileRecursive('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp', targetPath);
     fs.chmodSync(targetPath, 0o755);
     console.log('✅ Standalone yt-dlp binary ready!');
   } catch (err) {
