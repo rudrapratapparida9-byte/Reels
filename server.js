@@ -80,7 +80,7 @@ app.use(express.static(path.join(__dirname, 'dist'), {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '5.4.0-fast-bridge',
+    version: '5.4.1-fast-bridge',
     cachedEntries: mediaCache.size,
     time: new Date().toISOString()
   });
@@ -186,7 +186,7 @@ app.get('/api/instagram', async (req, res) => {
           if (bRes.ok) {
             const bJson = await bRes.json();
             if (bJson && bJson.success && bJson.data) {
-              result = bJson.data;
+              result = { success: true, ...bJson.data };
               break;
             }
           }
