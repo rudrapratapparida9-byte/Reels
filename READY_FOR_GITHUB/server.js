@@ -1,10 +1,19 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import http from 'http';
 import https from 'https';
+import fs from 'fs';
+import ffmpegPath from 'ffmpeg-static';
+
+// Ensure ffmpeg executable has 755 execute permissions on Linux/Render
+try {
+  if (ffmpegPath && fs.existsSync(ffmpegPath)) {
+    fs.chmodSync(ffmpegPath, 0o755);
+  }
+} catch (e) {}
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -13,8 +22,160 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Serve static frontend assets
-app.use(express.static(path.join(__dirname, 'dist')));
+// High-speed In-Memory Cache (TTL: 10 minutes)
+const mediaCache = new Map();
+const CACHE_TTL_MS = 10 * 60 * 1000;
+
+function getCached(key) {
+  const item = mediaCache.get(key);
+  if (!item) return null;
+  if (Date.now() - item.timestamp > CACHE_TTL_MS) {
+    mediaCache.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+function setCached(key, data) {
+  if (mediaCache.size > 500) {
+    const oldestKey = mediaCache.keys().next().value;
+    mediaCache.delete(oldestKey);
+  }
+  mediaCache.set(key, { data, timestamp: Date.now() });
+}
+
+// Universal CORS headers for all browser clients
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Serve static frontend assets with automatic mobile/desktop cache busting
+app.use((req, res, next) => {
+  if (req.path === '/' || req.path === '/index.html') {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Clear-Site-Data', '"cache"');
+  }
+  next();
+});
+
+// Explicit ads.txt and robots.txt handlers
+app.get('/ads.txt', (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send('google.com, pub-6931746397574530, DIRECT, f08c47fec0942fa0\n');
+});
+
+app.get('/robots.txt', (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send("User-agent: *\nAllow: /\nSitemap: https://reels-1-nvfo.onrender.com/sitemap.xml\n");
+});
+
+app.use(express.static(path.join(__dirname, 'dist'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Clear-Site-Data', '"cache"');
+    }
+  }
+}));
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: '5.4.2-seamless-bridge',
+    cachedEntries: mediaCache.size,
+    time: new Date().toISOString()
+  });
+});
+
+app.get('/api/clear-cache', (req, res) => {
+  const count = mediaCache.size;
+  mediaCache.clear();
+  res.json({ success: true, message: `Cleared ${count} cached media items.` });
+});
+
+app.get('/api/debug-ytdlp', async (req, res) => {
+  const targetUrl = cleanInstagramUrl(req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/');
+  const ytdlpCommands = [
+    { name: './yt-dlp', bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', targetUrl] },
+    { name: 'python3 extract', bin: 'python3', args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] },
+    { name: 'python3 yt_dlp', bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', targetUrl] }
+  ];
+
+  const results = [];
+  for (const cmd of ytdlpCommands) {
+    try {
+      const start = Date.now();
+      const execRes = await execFileAsync(cmd.bin, cmd.args, { cwd: __dirname, timeout: 20000 });
+      let parsed = null;
+      try { parsed = JSON.parse(execRes.stdout.trim()); } catch (e) {}
+      results.push({
+        name: cmd.name,
+        time: Date.now() - start,
+        success: true,
+        keys: parsed ? Object.keys(parsed) : null,
+        formats: parsed && parsed.formats ? parsed.formats.map(f => ({ id: f.format_id, acodec: f.acodec, vcodec: f.vcodec, url_prefix: f.url ? f.url.slice(0, 60) : null })) : null,
+        videoUrl: parsed ? (parsed.videoUrl || parsed.url) : null,
+        audioUrl: parsed ? parsed.audioUrl : null
+      });
+    } catch (err) {
+      results.push({ name: cmd.name, success: false, error: err.message });
+    }
+  }
+
+  res.json({ targetUrl, results });
+});
+
+const BRIDGE_URL = process.env.EXTRACTION_BRIDGE_URL || 'https://critical-balance-william-soldier.trycloudflare.com';
+
+function shouldBridge(req) {
+  const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
+  const reqHost = (req.headers.host || '').toLowerCase();
+  const isSelf = BRIDGE_URL.toLowerCase().includes(reqHost);
+  return !isBridgeRequest && !isSelf && Boolean(BRIDGE_URL);
+}
+
+function proxyThroughBridge(req, res, fallback) {
+  if (!shouldBridge(req)) {
+    return fallback();
+  }
+
+  const target = `${BRIDGE_URL}${req.originalUrl}${req.originalUrl.includes('?') ? '&' : '?'}nobridge=1`;
+  const bridgeReq = https.get(target, {
+    headers: {
+      ...req.headers,
+      'host': new URL(BRIDGE_URL).host,
+      'x-bridge-request': 'true'
+    },
+    timeout: 45000
+  }, (bridgeRes) => {
+    if (bridgeRes.statusCode < 400 || bridgeRes.headers['content-type']?.includes('video') || bridgeRes.headers['content-type']?.includes('audio') || bridgeRes.headers['content-type']?.includes('image')) {
+      res.writeHead(bridgeRes.statusCode, bridgeRes.headers);
+      return bridgeRes.pipe(res);
+    }
+    fallback();
+  });
+
+  bridgeReq.on('error', (err) => {
+    console.warn('Bridge proxy connection error, executing local fallback:', err.message);
+    fallback();
+  });
+
+  req.on('close', () => {
+    try { bridgeReq.destroy(); } catch (e) {}
+  });
+}
 
 function cleanInstagramUrl(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -23,7 +184,24 @@ function cleanInstagramUrl(rawUrl) {
   if (urlMatch) {
     url = urlMatch[0].startsWith('http') ? urlMatch[0] : `https://${urlMatch[0]}`;
   }
-  return url;
+
+  const postMatch = url.match(/\/(reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i);
+  if (postMatch) {
+    const type = postMatch[1].toLowerCase() === 'p' ? 'p' : 'reel';
+    return `https://www.instagram.com/${type}/${postMatch[2]}/`;
+  }
+
+  const audioMatch = url.match(/\/(reels\/audio|audio|music)\/([0-9]+)/i);
+  if (audioMatch) {
+    return `https://www.instagram.com/reels/audio/${audioMatch[2]}/`;
+  }
+
+  const storyMatch = url.match(/\/stories\/([^/?#]+)\/([0-9]+)/i);
+  if (storyMatch) {
+    return `https://www.instagram.com/stories/${storyMatch[1]}/${storyMatch[2]}/`;
+  }
+
+  return url.split('?')[0].split('#')[0].replace(/\/+$/, '') + '/';
 }
 
 // 1. API: Instagram Media Extraction
@@ -34,65 +212,139 @@ app.get('/api/instagram', async (req, res) => {
   }
 
   const targetUrl = cleanInstagramUrl(rawTargetUrl);
+  
+  // Check memory cache first
+  const cached = getCached(targetUrl);
+  if (cached) {
+    return res.json(cached);
+  }
 
   try {
-    let stdout;
-    const pyOpts = {
-      timeout: 30000,
-      maxBuffer: 15 * 1024 * 1024,
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-    };
-    try {
-      const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], pyOpts);
-      stdout = pyRes.stdout;
-    } catch (pyErr) {
-      const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], pyOpts);
-      stdout = pyRes.stdout;
-    }
+    let result = null;
+    const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
 
-    let result;
-    try {
-      result = JSON.parse(stdout.trim());
-    } catch (e) {
-      result = { success: false };
-    }
+    // 1. Fast Residential Bridge (Active on Render / cloud hosts to bypass datacenter IP restrictions)
+    if (!isBridgeRequest) {
+      const bridgeUrls = [
+        process.env.EXTRACTION_BRIDGE_URL,
+        'https://critical-balance-william-soldier.trycloudflare.com'
+      ].filter(Boolean);
 
-    // If cloud server IP was blocked by Instagram and returned fallback data, query residential bridge
-    if (!result.success || result.username === '@instagram_creator') {
-      const bridges = [
-        'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
-      ];
-      for (const bridge of bridges) {
+      for (const bridge of bridgeUrls) {
         try {
-          const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(6000) });
-          const bridgePayload = await bridgeRes.json();
-          if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
-            return res.json(bridgePayload);
+          const bRes = await fetch(`${bridge}/api/instagram?url=${encodeURIComponent(targetUrl)}&nobridge=1`, {
+            headers: { 'Accept': 'application/json', 'X-Bridge-Request': 'true' },
+            signal: AbortSignal.timeout(8000)
+          });
+          if (bRes.ok) {
+            const bJson = await bRes.json();
+            if (bJson && bJson.success && bJson.data) {
+              result = { success: true, ...bJson.data };
+              break;
+            }
           }
-        } catch (bridgeErr) {}
+        } catch (bErr) {}
       }
     }
 
-    if (!result.success) {
-      return res.status(400).json({ success: false, error: result.error || 'Failed to extract Instagram media.' });
+    // 2. Direct Python Extractor (Fallback if bridge is unavailable)
+    if (!result || !result.success) {
+      const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+      const pyOpts = {
+        cwd: __dirname,
+        timeout: 10000,
+        maxBuffer: 20 * 1024 * 1024,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+      };
+
+      const pythonBins = ['python3', 'python', 'py'];
+      for (const bin of pythonBins) {
+        try {
+          const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
+          if (pyRes && pyRes.stdout) {
+            const parsed = JSON.parse(pyRes.stdout.trim());
+            if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
+              result = parsed;
+              break;
+            }
+          }
+        } catch (err) {}
+      }
+    }
+
+    if (!result || !result.success) {
+      return res.status(400).json({ success: false, error: (result && result.error) || 'Unable to extract Instagram media. Please make sure the link is from a public post.' });
+    }
+
+    function extractRawUrl(streamOrRawUrl) {
+      if (!streamOrRawUrl) return null;
+      if (typeof streamOrRawUrl !== 'string') return streamOrRawUrl;
+      if (streamOrRawUrl.startsWith('/api/stream') || streamOrRawUrl.includes('/api/stream?url=')) {
+        try {
+          const u = new URL(streamOrRawUrl, 'http://localhost');
+          return u.searchParams.get('url') || streamOrRawUrl;
+        } catch (e) {
+          return streamOrRawUrl;
+        }
+      }
+      if (streamOrRawUrl.startsWith('/api/merge') || streamOrRawUrl.includes('/api/merge?')) {
+        try {
+          const u = new URL(streamOrRawUrl, 'http://localhost');
+          return u.searchParams.get('videoUrl') || streamOrRawUrl;
+        } catch (e) {
+          return streamOrRawUrl;
+        }
+      }
+      return streamOrRawUrl;
     }
 
     const cleanShortcode = String(result.shortcode || 'media').replace(/[^a-zA-Z0-9_-]/g, '');
 
-    const proxiedVideoUrl = result.videoUrl 
-      ? `/api/stream?url=${encodeURIComponent(result.videoUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
+    let rawVideo = null;
+    let rawAudio = null;
+
+    if (result.videoUrl && typeof result.videoUrl === 'string' && (result.videoUrl.startsWith('/api/merge') || result.videoUrl.includes('/api/merge?'))) {
+      try {
+        const u = new URL(result.videoUrl, 'http://localhost');
+        rawVideo = u.searchParams.get('videoUrl');
+        rawAudio = u.searchParams.get('audioUrl');
+      } catch (e) {}
+    }
+
+    if (!rawVideo) {
+      rawVideo = extractRawUrl(result.videoUrl);
+    }
+    if (!rawAudio) {
+      rawAudio = extractRawUrl(result.audioUrl);
+    }
+    const rawThumb = extractRawUrl(result.thumbnailUrl);
+
+    // If separate audio stream exists and differs from the video URL, ALWAYS merge with FFmpeg to guarantee sound
+    const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
+
+    const proxiedVideoWithAudioUrl = rawVideo 
+      ? (hasSeparateAudio
+          ? `/api/merge?videoUrl=${encodeURIComponent(rawVideo)}&audioUrl=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_with_audio.mp4`)}&inline=true`
+          : `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_with_audio.mp4`)}&inline=true`)
       : null;
 
-    const proxiedAudioUrl = result.audioUrl 
-      ? `/api/stream?url=${encodeURIComponent(result.audioUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
+    const proxiedVideoOnlyUrl = rawVideo 
+      ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_video_only.mp4`)}&inline=true`
       : null;
 
-    const proxiedThumbnail = result.thumbnailUrl 
-      ? `/api/stream?url=${encodeURIComponent(result.thumbnailUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_thumb.jpg`)}&inline=true`
+    const proxiedAudioUrl = rawAudio 
+      ? `/api/audio?url=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
+      : null;
+
+    const proxiedThumbnail = rawThumb 
+      ? `/api/stream?url=${encodeURIComponent(rawThumb)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_thumb.jpg`)}&inline=true`
       : null;
 
     const proxiedImages = (result.images && Array.isArray(result.images)) 
-      ? result.images.map((img, idx) => `/api/stream?url=${encodeURIComponent(img)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_${idx + 1}.jpg`)}&inline=true`)
+      ? result.images.map((img, idx) => {
+          const rawImg = extractRawUrl(img);
+          return `/api/stream?url=${encodeURIComponent(rawImg)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_${idx + 1}.jpg`)}&inline=true`;
+        })
       : (proxiedThumbnail ? [proxiedThumbnail] : []);
 
     const payload = {
@@ -108,7 +360,9 @@ app.get('/api/instagram', async (req, res) => {
         comments: result.comments || 'Public',
         caption: result.caption || '',
         url: rawTargetUrl,
-        videoUrl: proxiedVideoUrl || result.videoUrl || null,
+        videoUrl: proxiedVideoWithAudioUrl || result.videoUrl || null,
+        videoWithAudioUrl: proxiedVideoWithAudioUrl || result.videoWithAudioUrl || result.videoUrl || null,
+        videoOnlyUrl: proxiedVideoOnlyUrl || result.videoOnlyUrl || proxiedVideoWithAudioUrl || null,
         thumbnailUrl: proxiedThumbnail || result.thumbnailUrl || null,
         images: proxiedImages.length > 0 ? proxiedImages : (result.images || []),
         audioTitle: result.audioTitle || `${result.username || '@instagram_creator'} • Original Audio (320kbps MP3)`,
@@ -117,59 +371,241 @@ app.get('/api/instagram', async (req, res) => {
       }
     };
 
+    // Cache successful payload
+    setCached(targetUrl, payload);
+
     return res.json(payload);
   } catch (err) {
     console.error('API Extraction Error:', err.message);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message || 'Internal extraction error' });
   }
 });
 
-// 2. API: Media Stream & Proxy Route with Resilient Audio & Video Fallbacks
-const FALLBACK_AUDIO_URL = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
-const FALLBACK_VIDEO_URL = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
-const FALLBACK_IMAGE_URL = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80';
+// 2. API: Merged Video + Audio Stream Route (Fast Multiplexing via FFmpeg)
+app.get('/api/merge', (req, res) => {
+  proxyThroughBridge(req, res, () => {
+    const videoUrl = req.query.videoUrl;
+    const audioUrl = req.query.audioUrl;
+    const filename = req.query.filename || 'instagram_reel_1080p.mp4';
+    const isInline = req.query.inline === 'true';
+    const isDownload = req.query.download === '1' || !isInline;
 
-app.get('/api/stream', (req, res) => {
-  let streamUrl = req.query.url;
-  const filename = req.query.filename || 'instagram_media.mp4';
-  const isInline = req.query.inline === 'true';
-  const isDownload = req.query.download === '1' || !isInline;
-
-  const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
-  const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
-  const defaultContentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
-  const fallbackUrl = isAudio ? FALLBACK_AUDIO_URL : isJpg ? FALLBACK_IMAGE_URL : FALLBACK_VIDEO_URL;
-
-  if (!streamUrl) {
-    streamUrl = fallbackUrl;
-  }
-
-  // If a relative or nested /api/stream was passed, unwrap it
-  if (streamUrl.startsWith('/api/stream')) {
-    try {
-      const parsed = new URL(streamUrl, 'http://localhost:5000');
-      streamUrl = parsed.searchParams.get('url') || fallbackUrl;
-    } catch (e) {
-      streamUrl = fallbackUrl;
+    if (!videoUrl) {
+      return res.status(400).send('Missing videoUrl parameter');
     }
-  }
 
-  const fetchWithRedirects = (targetUrl, redirectCount = 0, isFallback = false) => {
-    if (redirectCount > 5) {
-      if (!isFallback) {
-        return fetchWithRedirects(fallbackUrl, 0, true);
+    // If no separate audio is provided, proxy the video directly
+    if (!audioUrl || audioUrl === videoUrl) {
+      return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+    }
+
+    const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+    const disposition = isDownload ? 'attachment' : 'inline';
+
+    try {
+      const ffmpegBin = ffmpegPath || 'ffmpeg';
+      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+
+      const args = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-user_agent', userAgent,
+        '-headers', 'Referer: https://www.instagram.com/\r\n',
+        '-i', videoUrl,
+        '-user_agent', userAgent,
+        '-headers', 'Referer: https://www.instagram.com/\r\n',
+        '-i', audioUrl,
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '320k',
+        '-shortest',
+        '-avoid_negative_ts', 'make_zero',
+        '-fflags', '+genpts',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-f', 'mp4',
+        'pipe:1'
+      ];
+
+      const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let hasSentData = false;
+
+      proc.stdout.on('data', (chunk) => {
+        if (!hasSentData) {
+          hasSentData = true;
+          res.setHeader('Content-Type', 'video/mp4');
+          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+        }
+        res.write(chunk);
+      });
+
+      proc.stdout.on('end', () => {
+        if (hasSentData) {
+          res.end();
+        } else if (!res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+        }
+      });
+
+      proc.on('error', (err) => {
+        console.warn('FFmpeg merge spawn failed, redirecting to raw stream:', err.message);
+        if (!hasSentData && !res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+        }
+      });
+
+      req.on('close', () => {
+        try { proc.kill('SIGKILL'); } catch (e) {}
+      });
+    } catch (err) {
+      if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
       }
-      return res.status(500).send('Too many redirects');
+    }
+  });
+});
+
+// 3. API: Dedicated High-Quality 320kbps MP3 Audio Transcoder Route
+app.get('/api/audio', (req, res) => {
+  proxyThroughBridge(req, res, () => {
+    let rawUrl = req.query.url;
+    if (Array.isArray(rawUrl)) rawUrl = rawUrl[0];
+    let audioUrl = rawUrl ? String(rawUrl) : '';
+
+    const rawFilename = req.query.filename;
+    const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_audio.mp3'));
+    const isInline = req.query.inline === 'true';
+    const isDownload = req.query.download === '1' || !isInline;
+
+    if (!audioUrl) {
+      return res.status(400).send('Missing audio stream URL');
+    }
+
+    // Unwrap if nested stream URL
+    if (audioUrl.startsWith('/api/stream') || audioUrl.startsWith('/api/audio')) {
+      try {
+        const parsed = new URL(audioUrl, `http://localhost:${PORT}`);
+        audioUrl = parsed.searchParams.get('url') || audioUrl;
+      } catch (e) {}
+    }
+
+    const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+    const disposition = (isInline && !isDownload) ? 'inline' : 'attachment';
+
+    try {
+      const ffmpegBin = ffmpegPath || 'ffmpeg';
+      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
+
+      const args = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-headers', headersStr,
+        '-i', audioUrl,
+        '-c:a', 'libmp3lame',
+        '-b:a', '320k',
+        '-f', 'mp3',
+        'pipe:1'
+      ];
+
+      const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let hasSentData = false;
+
+      proc.stdout.on('data', (chunk) => {
+        if (!hasSentData) {
+          hasSentData = true;
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+        }
+        res.write(chunk);
+      });
+
+      proc.stdout.on('end', () => {
+        if (hasSentData) {
+          res.end();
+        } else if (!res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+        }
+      });
+
+      proc.on('error', (err) => {
+        console.warn('FFmpeg audio transcode failed, falling back to raw stream:', err.message);
+        if (!hasSentData && !res.headersSent) {
+          res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+        }
+      });
+
+      req.on('close', () => {
+        try { proc.kill('SIGKILL'); } catch (e) {}
+      });
+    } catch (err) {
+      if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+      }
+    }
+  });
+});
+
+// 4. API: Media Stream & Proxy Route
+app.get('/api/stream', (req, res) => {
+  proxyThroughBridge(req, res, () => {
+    let rawStreamUrl = req.query.url;
+    if (Array.isArray(rawStreamUrl)) rawStreamUrl = rawStreamUrl[0];
+    let streamUrl = rawStreamUrl ? String(rawStreamUrl) : '';
+
+    const rawFilename = req.query.filename;
+    const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_media.mp4'));
+    const isInline = req.query.inline === 'true';
+    const isDownload = req.query.download === '1' || !isInline;
+
+    const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
+    const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
+    const defaultContentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
+
+    if (!streamUrl) {
+      return res.status(400).send('Missing media stream URL.');
+    }
+
+    // If a relative or nested /api/stream was passed, unwrap it
+    if (streamUrl.startsWith('/api/stream')) {
+      try {
+        const parsed = new URL(streamUrl, `http://localhost:${PORT}`);
+        streamUrl = parsed.searchParams.get('url') || '';
+        if (!streamUrl) return res.status(400).send('Invalid stream URL.');
+      } catch (e) {
+        return res.status(400).send('Invalid stream URL.');
+      }
+    }
+
+    // Normalize URL encoding (fix double-encoded & and = from CDN signatures)
+    if (streamUrl.includes('%26') || streamUrl.includes('%3D')) {
+      streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
+    }
+
+  const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
+    if (redirectCount > 5) {
+      if (!res.headersSent) res.status(500).send('Too many redirects');
+      return;
     }
 
     try {
-      const targetObj = new URL(targetUrl);
-      const client = targetObj.protocol === 'https:' ? https : http;
+      let cleanTarget = targetUrl;
+      if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
+        cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
+      }
 
+      const targetObj = new URL(cleanTarget);
       const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
 
+      const client = targetObj.protocol === 'https:' ? https : http;
       const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         'Accept': '*/*'
       };
 
@@ -182,15 +618,17 @@ app.get('/api/stream', (req, res) => {
         headers['Range'] = req.headers.range;
       }
 
-      const request = client.get(targetUrl, { headers, timeout: 12000 }, (proxyRes) => {
+      const request = client.get(cleanTarget, { headers, timeout: 30000 }, (proxyRes) => {
         if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-          const nextUrl = new URL(proxyRes.headers.location, targetUrl).toString();
-          return fetchWithRedirects(nextUrl, redirectCount + 1, isFallback);
+          const nextUrl = new URL(proxyRes.headers.location, cleanTarget).toString();
+          return fetchWithRedirects(nextUrl, redirectCount + 1);
         }
 
-        // If upstream rejected the request (403 Forbidden or 404), seamlessly fallback to working media
-        if (proxyRes.statusCode >= 400 && !isFallback) {
-          return fetchWithRedirects(fallbackUrl, 0, true);
+        if (proxyRes.statusCode >= 400) {
+          if (!res.headersSent) {
+            return res.status(proxyRes.statusCode).send(`Upstream CDN returned ${proxyRes.statusCode}`);
+          }
+          return;
         }
 
         if (res.headersSent) return;
@@ -224,38 +662,37 @@ app.get('/api/stream', (req, res) => {
       });
 
       request.on('error', (e) => {
-        if (!isFallback) {
-          return fetchWithRedirects(fallbackUrl, 0, true);
-        }
         if (!res.headersSent) {
-          res.status(500).send('Proxy streaming error: ' + e.message);
+          res.status(502).send('Proxy streaming error: ' + e.message);
         }
       });
 
       request.on('timeout', () => {
         request.destroy();
-        if (!isFallback) {
-          return fetchWithRedirects(fallbackUrl, 0, true);
+        if (!res.headersSent) {
+          res.status(504).send('Proxy streaming timeout');
         }
       });
     } catch (e) {
-      if (!isFallback) {
-        return fetchWithRedirects(fallbackUrl, 0, true);
-      }
       if (!res.headersSent) {
         res.status(500).send('Proxy error: ' + e.message);
       }
     }
   };
 
-  fetchWithRedirects(streamUrl);
+    fetchWithRedirects(streamUrl);
+  });
 });
 
 // Single Page Application Fallback Middleware (Express 5 safe)
 app.use((req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Clear-Site-Data', '"cache"');
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 ReelsVault Server running on http://localhost:${PORT}`);
+  console.log(`🚀 ReelsVault Standalone Server running on http://localhost:${PORT}`);
 });

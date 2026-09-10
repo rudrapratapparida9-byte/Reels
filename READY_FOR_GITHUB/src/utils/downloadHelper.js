@@ -61,6 +61,32 @@ export function triggerHiddenIframeDownload(url) {
 export function buildDownloadProxyUrl(mediaUrl, filename) {
   if (!mediaUrl) return '';
 
+  // If already an /api/merge URL, preserve video + audio merging
+  if (mediaUrl.includes('/api/merge')) {
+    try {
+      const parsed = new URL(mediaUrl, window.location.origin);
+      parsed.searchParams.set('filename', filename);
+      parsed.searchParams.set('download', '1');
+      parsed.searchParams.set('inline', 'false');
+      return parsed.pathname + parsed.search;
+    } catch (e) {
+      return `${mediaUrl}&download=1&filename=${encodeURIComponent(filename)}`;
+    }
+  }
+
+  // If already an /api/audio URL, preserve 320kbps MP3 transcoding
+  if (mediaUrl.includes('/api/audio')) {
+    try {
+      const parsed = new URL(mediaUrl, window.location.origin);
+      parsed.searchParams.set('filename', filename);
+      parsed.searchParams.set('download', '1');
+      parsed.searchParams.set('inline', 'false');
+      return parsed.pathname + parsed.search;
+    } catch (e) {
+      return `${mediaUrl}&download=1&filename=${encodeURIComponent(filename)}`;
+    }
+  }
+
   let rawUrl = mediaUrl;
   
   // If already an /api/stream proxy URL, parse its target URL
@@ -99,7 +125,7 @@ export async function downloadMediaFile(mediaUrl, filename = 'instagram_media.mp
   // This is the cleanest HTML5 method: forces exact filename, avoids popups/new tabs, works on Mobile & Desktop
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
 
     // Try fetching via the attachment proxy first, then raw URL
     const fetchUrl = proxyDownloadUrl;

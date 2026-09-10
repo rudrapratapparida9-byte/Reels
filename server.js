@@ -322,10 +322,14 @@ app.get('/api/instagram', async (req, res) => {
     // If separate audio stream exists and differs from the video URL, ALWAYS merge with FFmpeg to guarantee sound
     const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
 
-    const proxiedVideoUrl = rawVideo 
+    const proxiedVideoWithAudioUrl = rawVideo 
       ? (hasSeparateAudio
-          ? `/api/merge?videoUrl=${encodeURIComponent(rawVideo)}&audioUrl=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
-          : `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`)
+          ? `/api/merge?videoUrl=${encodeURIComponent(rawVideo)}&audioUrl=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_with_audio.mp4`)}&inline=true`
+          : `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_with_audio.mp4`)}&inline=true`)
+      : null;
+
+    const proxiedVideoOnlyUrl = rawVideo 
+      ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_video_only.mp4`)}&inline=true`
       : null;
 
     const proxiedAudioUrl = rawAudio 
@@ -356,7 +360,9 @@ app.get('/api/instagram', async (req, res) => {
         comments: result.comments || 'Public',
         caption: result.caption || '',
         url: rawTargetUrl,
-        videoUrl: proxiedVideoUrl || result.videoUrl || null,
+        videoUrl: proxiedVideoWithAudioUrl || result.videoUrl || null,
+        videoWithAudioUrl: proxiedVideoWithAudioUrl || result.videoWithAudioUrl || result.videoUrl || null,
+        videoOnlyUrl: proxiedVideoOnlyUrl || result.videoOnlyUrl || proxiedVideoWithAudioUrl || null,
         thumbnailUrl: proxiedThumbnail || result.thumbnailUrl || null,
         images: proxiedImages.length > 0 ? proxiedImages : (result.images || []),
         audioTitle: result.audioTitle || `${result.username || '@instagram_creator'} • Original Audio (320kbps MP3)`,
@@ -398,18 +404,25 @@ app.get('/api/merge', (req, res) => {
 
     try {
       const ffmpegBin = ffmpegPath || 'ffmpeg';
-      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
+      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
       const args = [
         '-hide_banner',
         '-loglevel', 'error',
-        '-headers', headersStr,
+        '-user_agent', userAgent,
+        '-headers', 'Referer: https://www.instagram.com/\r\n',
         '-i', videoUrl,
-        '-headers', headersStr,
+        '-user_agent', userAgent,
+        '-headers', 'Referer: https://www.instagram.com/\r\n',
         '-i', audioUrl,
+        '-map', '0:v:0',
+        '-map', '1:a:0',
         '-c:v', 'copy',
         '-c:a', 'aac',
         '-b:a', '320k',
+        '-shortest',
+        '-avoid_negative_ts', 'make_zero',
+        '-fflags', '+genpts',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-f', 'mp4',
         'pipe:1'

@@ -601,18 +601,18 @@ export default function InstagramDownloader({
                     {/* Video with Audio option if available */}
                     {mediaData.videoUrl && (
                       <button
-                        onClick={() => handleDownload(mediaData.videoUrl, `${mediaData.id}_1080p_with_audio.mp4`, 'video')}
-                        disabled={downloadingKey === 'video'}
+                        onClick={() => handleDownload(mediaData.videoWithAudioUrl || mediaData.videoUrl, `${mediaData.id}_1080p_with_audio.mp4`, 'video_with_audio')}
+                        disabled={downloadingKey === 'video_with_audio'}
                         className="w-full py-3.5 px-6 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs sm:text-sm flex items-center justify-between border border-indigo-200 transition-all cursor-pointer disabled:opacity-60 group"
                       >
                         <div className="flex items-center gap-2">
-                          {downloadingKey === 'video' ? (
+                          {downloadingKey === 'video_with_audio' ? (
                             <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                           ) : (
                             <Film className="w-4 h-4 text-indigo-600 shrink-0 group-hover:scale-110 transition-transform" />
                           )}
                           <span>
-                            {downloadingKey === 'video' ? 'Saving Video + Audio...' : 'Download Full Video with Audio (1080p MP4)'}
+                            {downloadingKey === 'video_with_audio' ? 'Saving Video + Audio...' : 'Download Full Video with Audio (1080p MP4)'}
                           </span>
                         </div>
                         <div className="hidden sm:flex items-center gap-1 text-[10px] uppercase font-black px-2 py-0.5 rounded-lg bg-indigo-200/80 text-indigo-900">
@@ -622,12 +622,35 @@ export default function InstagramDownloader({
                       </button>
                     )}
 
+                    {/* Video Only option if available */}
+                    {mediaData.videoUrl && (
+                      <button
+                        onClick={() => handleDownload(mediaData.videoOnlyUrl || mediaData.videoUrl, `${mediaData.id}_video_only_mute.mp4`, 'video_only')}
+                        disabled={downloadingKey === 'video_only'}
+                        className="w-full py-3 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm flex items-center justify-between border border-slate-200 transition-all cursor-pointer disabled:opacity-60 group"
+                      >
+                        <div className="flex items-center gap-2">
+                          {downloadingKey === 'video_only' ? (
+                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                          ) : (
+                            <Film className="w-4 h-4 text-slate-600 shrink-0 group-hover:scale-110 transition-transform" />
+                          )}
+                          <span>
+                            {downloadingKey === 'video_only' ? 'Saving Video Only...' : 'Download Video Only (Muted / No Audio)'}
+                          </span>
+                        </div>
+                        <span className="hidden sm:inline-block text-[10px] uppercase font-black px-2 py-0.5 rounded-lg bg-slate-200 text-slate-700">
+                          Muted MP4
+                        </span>
+                      </button>
+                    )}
+
                     {/* Secondary Download Again Button */}
                     <button
                       onClick={handleDownloadAgain}
-                      className="w-full py-3 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-slate-200 transition-colors cursor-pointer"
+                      className="w-full py-3 px-6 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-slate-200 transition-colors cursor-pointer"
                     >
-                      <RefreshCw className="w-4 h-4 text-slate-600" />
+                      <RefreshCw className="w-4 h-4 text-slate-500" />
                       <span>Extract Another Audio Track</span>
                     </button>
 
@@ -711,7 +734,34 @@ export default function InstagramDownloader({
                       )}
                     </button>
 
-                    {/* 2. Story Audio Track if video exists */}
+                    {/* 2. Story Video Only (Muted) if video exists */}
+                    {mediaData.videoUrl && (
+                      <button
+                        onClick={() => {
+                          const fileUrl = mediaData.videoOnlyUrl || mediaData.videoUrl;
+                          const filename = `${mediaData.id}_story_video_only_mute.mp4`;
+                          handleDownload(fileUrl, filename, 'story_video_only');
+                        }}
+                        disabled={downloadingKey === 'story_video_only'}
+                        className="w-full py-3.5 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs sm:text-sm flex items-center justify-between border border-slate-200 transition-all cursor-pointer disabled:opacity-60 group"
+                      >
+                        <div className="flex items-center gap-2">
+                          {downloadingKey === 'story_video_only' ? (
+                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                          ) : (
+                            <Film className="w-4 h-4 text-slate-600 shrink-0 group-hover:scale-110 transition-transform" />
+                          )}
+                          <span>
+                            {downloadingKey === 'story_video_only' ? 'Saving Video Only...' : 'Download Story Video Only (Muted / No Audio)'}
+                          </span>
+                        </div>
+                        <span className="hidden sm:inline-block text-[10px] uppercase font-black px-2 py-0.5 rounded-lg bg-slate-200 text-slate-700">
+                          Muted MP4
+                        </span>
+                      </button>
+                    )}
+
+                    {/* 3. Story Audio Track if video exists */}
                     {mediaData.videoUrl && mediaData.audioUrl && (
                       <button
                         onClick={() => handleDownload(mediaData.audioUrl, `${mediaData.id}_story_audio.mp3`, 'audio')}
@@ -736,9 +786,9 @@ export default function InstagramDownloader({
 
                     <button
                       onClick={handleDownloadAgain}
-                      className="w-full py-3 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-slate-200 transition-colors cursor-pointer"
+                      className="w-full py-3 px-6 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-slate-200 transition-colors cursor-pointer"
                     >
-                      <RefreshCw className="w-4 h-4 text-slate-600" />
+                      <RefreshCw className="w-4 h-4 text-slate-500" />
                       <span>Download Another Story</span>
                     </button>
                   </div>
@@ -1020,20 +1070,20 @@ export default function InstagramDownloader({
 
                   {/* Actions */}
                   <div className="space-y-3 pt-2">
-                    {/* 1. Primary: Download Video with Audio (1080p MP4) */}
+                    {/* 1. Primary Button: Download Video with Audio (1080p MP4) */}
                     <button
-                      onClick={() => handleDownload(mediaData.videoUrl, `${mediaData.id}_1080p_with_audio.mp4`, 'video')}
-                      disabled={downloadingKey === 'video'}
+                      onClick={() => handleDownload(mediaData.videoWithAudioUrl || mediaData.videoUrl, `${mediaData.id}_1080p_with_audio.mp4`, 'video_with_audio')}
+                      disabled={downloadingKey === 'video_with_audio'}
                       className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:opacity-95 text-white font-extrabold text-sm sm:text-base flex items-center justify-between shadow-lg shadow-indigo-500/25 transition-all cursor-pointer disabled:opacity-60 group"
                     >
                       <div className="flex items-center gap-2.5">
-                        {downloadingKey === 'video' ? (
+                        {downloadingKey === 'video_with_audio' ? (
                           <Loader2 className="w-5 h-5 animate-spin shrink-0" />
                         ) : (
                           <Download className="w-5 h-5 shrink-0 group-hover:scale-110 transition-transform" />
                         )}
                         <span className="text-left font-black">
-                          {downloadingKey === 'video' ? 'Saving 1080p Video + Audio...' : 'Download Video with Audio (MP4)'}
+                          {downloadingKey === 'video_with_audio' ? 'Saving 1080p Video + Audio...' : 'Download Video with Audio (MP4)'}
                         </span>
                       </div>
                       <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/20 text-white text-[11px] font-black uppercase tracking-wider backdrop-blur-sm">
@@ -1042,7 +1092,29 @@ export default function InstagramDownloader({
                       </div>
                     </button>
 
-                    {/* 2. Secondary: Download Audio Track (320kbps MP3) */}
+                    {/* 2. Secondary Button: Download Video Only (Muted / No Audio) */}
+                    <button
+                      onClick={() => handleDownload(mediaData.videoOnlyUrl || mediaData.videoUrl, `${mediaData.id}_video_only_mute.mp4`, 'video_only')}
+                      disabled={downloadingKey === 'video_only'}
+                      className="w-full py-3.5 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs sm:text-sm flex items-center justify-between border border-slate-200 shadow-sm transition-all cursor-pointer disabled:opacity-60 group"
+                    >
+                      <div className="flex items-center gap-2">
+                        {downloadingKey === 'video_only' ? (
+                          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        ) : (
+                          <Film className="w-4 h-4 text-slate-600 shrink-0 group-hover:scale-110 transition-transform" />
+                        )}
+                        <span className="font-bold text-slate-800">
+                          {downloadingKey === 'video_only' ? 'Saving Video Only...' : 'Download Video Only (Muted / No Audio)'}
+                        </span>
+                      </div>
+                      <div className="hidden sm:flex items-center gap-1 text-[10px] uppercase font-black px-2 py-0.5 rounded-lg bg-slate-200 text-slate-700">
+                        <VolumeX className="w-3 h-3 text-slate-500" />
+                        <span>Muted MP4</span>
+                      </div>
+                    </button>
+
+                    {/* 3. Audio Track Download Button */}
                     {mediaData.audioUrl && (
                       <button
                         onClick={() => handleDownload(mediaData.audioUrl, `${mediaData.id}_audio.mp3`, 'audio')}
@@ -1065,12 +1137,12 @@ export default function InstagramDownloader({
                       </button>
                     )}
 
-                    {/* 3. Restart / Another Video */}
+                    {/* 4. Restart / Another Video */}
                     <button
                       onClick={handleDownloadAgain}
-                      className="w-full py-3 px-6 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-slate-200 transition-colors cursor-pointer"
+                      className="w-full py-3 px-6 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-slate-200 transition-colors cursor-pointer"
                     >
-                      <RefreshCw className="w-4 h-4 text-slate-600" />
+                      <RefreshCw className="w-4 h-4 text-slate-500" />
                       <span>Download Another Video</span>
                     </button>
                   </div>
@@ -1085,7 +1157,7 @@ export default function InstagramDownloader({
                     </button>
 
                     <button
-                      onClick={() => handleDownload(mediaData.videoUrl, `${mediaData.id}_1080p_with_audio.mp4`, 'direct_video')}
+                      onClick={() => handleDownload(mediaData.videoWithAudioUrl || mediaData.videoUrl, `${mediaData.id}_1080p_with_audio.mp4`, 'direct_video')}
                       className="hover:text-indigo-600 flex items-center gap-1 underline font-bold cursor-pointer bg-transparent border-0"
                     >
                       <ExternalLink className="w-3 h-3" />
