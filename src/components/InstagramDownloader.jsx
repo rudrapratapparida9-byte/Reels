@@ -69,6 +69,10 @@ export default function InstagramDownloader({
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
+  useEffect(() => {
+    setErrorMsg(null);
+  }, [activeCategory]);
+
   const toggleAudioPlay = () => {
     if (!audioPreviewRef.current) return;
     if (isPlayingAudio) {
@@ -409,9 +413,17 @@ export default function InstagramDownloader({
 
           {/* Error Message Box */}
           {errorMsg && (
-            <div className="mt-4 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-center gap-3 animate-fadeIn font-semibold text-left">
-              <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
-              <span>{errorMsg}</span>
+            <div className="mt-4 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-center justify-between gap-3 animate-fadeIn font-semibold text-left">
+              <div className="flex items-center gap-3 min-w-0">
+                <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
+                <span className="break-words">{errorMsg}</span>
+              </div>
+              <button
+                onClick={() => handleFetch()}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shrink-0 shadow-sm"
+              >
+                Retry
+              </button>
             </div>
           )}
 

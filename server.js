@@ -14,6 +14,28 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// High-speed In-Memory Cache (TTL: 10 minutes)
+const mediaCache = new Map();
+const CACHE_TTL_MS = 10 * 60 * 1000;
+
+function getCached(key) {
+  const item = mediaCache.get(key);
+  if (!item) return null;
+  if (Date.now() - item.timestamp > CACHE_TTL_MS) {
+    mediaCache.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+function setCached(key, data) {
+  if (mediaCache.size > 500) {
+    const oldestKey = mediaCache.keys().next().value;
+    mediaCache.delete(oldestKey);
+  }
+  mediaCache.set(key, { data, timestamp: Date.now() });
+}
+
 // Universal CORS headers for all browser clients
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -47,74 +69,13 @@ app.use(express.static(path.join(__dirname, 'dist'), {
   }
 }));
 
-function fetchJson(targetUrl, timeoutMs = 10000, options = {}) {
-  return new Promise((resolve, reject) => {
-    try {
-      const parsedUrl = new URL(targetUrl);
-      const client = parsedUrl.protocol === 'https:' ? https : http;
-      const method = options.method || 'GET';
-      const reqHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-        'X-From-Render': 'true',
-        ...(options.headers || {})
-      };
-
-      const reqOpts = {
-        method: method,
-        headers: reqHeaders,
-        timeout: timeoutMs
-      };
-
-      const req = client.request(targetUrl, reqOpts, (res) => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`HTTP status ${res.statusCode}`));
-        }
-        let body = '';
-        res.setEncoding('utf8');
-        res.on('data', chunk => { body += chunk; });
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(body));
-          } catch (e) {
-            reject(new Error(`JSON parse error: ${e.message}`));
-          }
-        });
-      });
-
-      req.on('error', (err) => reject(err));
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error(`Timeout after ${timeoutMs}ms`));
-      });
-
-      if (options.body) {
-        req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
-      }
-      req.end();
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
-
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '4.2.1-tunnel-stream-fix',
+    version: '5.0.0-standalone-turbo',
+    cachedEntries: mediaCache.size,
     time: new Date().toISOString()
   });
-});
-
-app.get('/api/test-bridge', async (req, res) => {
-  const targetUrl = req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/';
-  const bridge = 'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram';
-  try {
-    const data = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}`, 25000);
-    res.json({ success: true, bridge, data });
-  } catch (err) {
-    res.status(500).json({ success: false, bridge, error: err.message, stack: err.stack });
-  }
 });
 
 function cleanInstagramUrl(rawUrl) {
@@ -125,7 +86,6 @@ function cleanInstagramUrl(rawUrl) {
     url = urlMatch[0].startsWith('http') ? urlMatch[0] : `https://${urlMatch[0]}`;
   }
 
-  // Clean tracking queries and format canonical Instagram URLs
   const postMatch = url.match(/\/(reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i);
   if (postMatch) {
     const type = postMatch[1].toLowerCase() === 'p' ? 'p' : 'reel';
@@ -153,58 +113,42 @@ app.get('/api/instagram', async (req, res) => {
   }
 
   const targetUrl = cleanInstagramUrl(rawTargetUrl);
-  const isFromBridgeCall = req.headers['x-from-render'] === 'true' || req.query.from_bridge === '1';
-  const isRender = !!(process.env.RENDER || (process.env.PORT && process.env.PORT !== '5000'));
+  
+  // Check memory cache first
+  const cached = getCached(targetUrl);
+  if (cached) {
+    return res.json(cached);
+  }
 
   try {
     let result = null;
     const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
-    const legacyPath = path.join(__dirname, 'extract_instagram.py');
     const pyOpts = {
       cwd: __dirname,
-      timeout: 30000,
-      maxBuffer: 15 * 1024 * 1024,
+      timeout: 35000,
+      maxBuffer: 20 * 1024 * 1024,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     };
 
     const pythonBins = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', 'py'];
 
-    // 1. If on Render and not handling a bridge call, query residential bridge
-    if (isRender && !isFromBridgeCall) {
-      const bridges = [
-        'https://critical-balance-william-soldier.trycloudflare.com/api/instagram',
-        'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram'
-      ];
-      for (const bridge of bridges) {
-        try {
-          const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}&from_bridge=1`, 3500);
-          if (bridgePayload && bridgePayload.success && bridgePayload.data && (bridgePayload.data.videoUrl || bridgePayload.data.audioUrl || bridgePayload.data.thumbnailUrl)) {
-            result = { ...bridgePayload.data, success: true };
+    // 1. Run dedicated extract_reel_audio.py across available Python binaries
+    for (const bin of pythonBins) {
+      try {
+        const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
+        if (pyRes && pyRes.stdout) {
+          const parsed = JSON.parse(pyRes.stdout.trim());
+          if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
+            result = parsed;
             break;
           }
-        } catch (bridgeErr) {
-          console.warn('Bridge error or timeout:', bridgeErr.message);
         }
+      } catch (err) {
+        // Continue to next binary
       }
     }
 
-    // 2. Try dedicated extract_reel_audio.py across available Python binaries
-    if (!result || !result.success) {
-      for (const bin of pythonBins) {
-        try {
-          const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
-          if (pyRes && pyRes.stdout) {
-            const parsed = JSON.parse(pyRes.stdout.trim());
-            if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
-              result = parsed;
-              break;
-            }
-          }
-        } catch (err) {}
-      }
-    }
-
-    // 3. Direct yt-dlp execution fallback
+    // 2. Direct yt-dlp execution fallback
     if (!result || !result.success) {
       const ytdlpCommands = [
         { bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', targetUrl] },
@@ -222,6 +166,7 @@ app.get('/api/instagram', async (req, res) => {
               let audioUrl = null;
               let videoUrl = null;
 
+              // Find audio stream
               for (const f of formats) {
                 const fid = String(f.format_id || '');
                 const vcodec = String(f.vcodec || '');
@@ -308,49 +253,8 @@ app.get('/api/instagram', async (req, res) => {
       }
     }
 
-    // 5. Online Cluster Scraper Fallback (Cobalt / Public Multi-Cluster)
     if (!result || !result.success) {
-      const clusterEndpoints = [
-        'https://api.cobalt.tools/api/json',
-        'https://cobalt-api.kwiatekm.pl/api/json',
-        'https://co.wuk.sh/api/json',
-        'https://api.wuk.sh/api/json'
-      ];
-      for (const endpoint of clusterEndpoints) {
-        try {
-          const resp = await fetchJson(endpoint, 5000, {
-            method: 'POST',
-            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: targetUrl, vQuality: '1080', filenamePattern: 'basic' })
-          });
-          if (resp && (resp.status === 'stream' || resp.status === 'redirect' || resp.status === 'tunnel') && resp.url) {
-            const sc = cleanInstagramUrl(targetUrl).match(/\/(?:reel|reels|p|audio)\/([A-Za-z0-9_-]+)/)?.[1] || 'media';
-            result = {
-              success: true,
-              id: `insta_${sc}`,
-              shortcode: sc,
-              type: 'reel',
-              title: `Instagram Reel (${sc})`,
-              username: '@instagram_creator',
-              caption: resp.caption || `Instagram Reel #${sc}`,
-              likes: 'Trending',
-              comments: 'Public',
-              is_video: true,
-              videoUrl: resp.url,
-              thumbnailUrl: resp.thumbnail || null,
-              images: resp.thumbnail ? [resp.thumbnail] : [],
-              audioTitle: 'Original Audio (320kbps MP3)',
-              audioUrl: resp.url,
-              duration: 'HD 1080p'
-            };
-            break;
-          }
-        } catch (e) {}
-      }
-    }
-
-    if (!result || !result.success) {
-      return res.status(400).json({ success: false, error: (result && result.error) || 'Failed to extract Instagram media.' });
+      return res.status(400).json({ success: false, error: (result && result.error) || 'Unable to extract Instagram media. Please make sure the link is from a public post.' });
     }
 
     function extractRawUrl(streamOrRawUrl) {
@@ -396,7 +300,15 @@ app.get('/api/instagram', async (req, res) => {
     }
     const rawThumb = extractRawUrl(result.thumbnailUrl);
 
-    const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
+    // Determine if video is a video-only DASH stream that requires FFmpeg merging
+    const isVideoOnlyDash = rawVideo && (
+      rawVideo.includes('.dash_') || 
+      rawVideo.includes('_dash_') || 
+      rawVideo.includes('dash_r2evevp9') ||
+      (result.videoUrl && result.videoUrl.includes('/api/merge'))
+    );
+
+    const hasSeparateAudio = Boolean(isVideoOnlyDash && rawAudio && rawVideo && rawAudio !== rawVideo);
 
     const proxiedVideoUrl = rawVideo 
       ? (hasSeparateAudio
@@ -441,10 +353,13 @@ app.get('/api/instagram', async (req, res) => {
       }
     };
 
+    // Cache successful payload
+    setCached(targetUrl, payload);
+
     return res.json(payload);
   } catch (err) {
     console.error('API Extraction Error:', err.message);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message || 'Internal extraction error' });
   }
 });
 
@@ -514,7 +429,7 @@ app.get('/api/merge', (req, res) => {
   }
 });
 
-// 2. API: Media Stream & Proxy Route
+// 3. API: Media Stream & Proxy Route
 app.get('/api/stream', (req, res) => {
   let rawStreamUrl = req.query.url;
   if (Array.isArray(rawStreamUrl)) rawStreamUrl = rawStreamUrl[0];
@@ -524,7 +439,6 @@ app.get('/api/stream', (req, res) => {
   const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_media.mp4'));
   const isInline = req.query.inline === 'true';
   const isDownload = req.query.download === '1' || !isInline;
-  const isFromBridge = req.query.from_bridge === '1' || req.headers['x-from-render'] === 'true';
 
   const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
   const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
@@ -537,7 +451,7 @@ app.get('/api/stream', (req, res) => {
   // If a relative or nested /api/stream was passed, unwrap it
   if (streamUrl.startsWith('/api/stream')) {
     try {
-      const parsed = new URL(streamUrl, 'http://localhost:5000');
+      const parsed = new URL(streamUrl, `http://localhost:${PORT}`);
       streamUrl = parsed.searchParams.get('url') || '';
       if (!streamUrl) return res.status(400).send('Invalid stream URL.');
     } catch (e) {
@@ -558,19 +472,12 @@ app.get('/api/stream', (req, res) => {
 
     try {
       let cleanTarget = targetUrl;
-      if (!targetUrl.includes('trycloudflare.com') && (cleanTarget.includes('%26') || cleanTarget.includes('%3D'))) {
+      if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
         cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
       }
 
       const targetObj = new URL(cleanTarget);
       const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
-      const isRender = !!(process.env.RENDER || (process.env.PORT && process.env.PORT !== '5000'));
-
-      // If running on Render and accessing a Meta CDN domain without bridge, route to residential bridge
-      if (isRender && isMetaDomain && !isFromBridge) {
-        const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}&from_bridge=1`;
-        return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
-      }
 
       const client = targetObj.protocol === 'https:' ? https : http;
       const headers = {
@@ -587,17 +494,13 @@ app.get('/api/stream', (req, res) => {
         headers['Range'] = req.headers.range;
       }
 
-      const request = client.get(cleanTarget, { headers, timeout: 25000 }, (proxyRes) => {
+      const request = client.get(cleanTarget, { headers, timeout: 30000 }, (proxyRes) => {
         if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
           const nextUrl = new URL(proxyRes.headers.location, cleanTarget).toString();
           return fetchWithRedirects(nextUrl, redirectCount + 1);
         }
 
         if (proxyRes.statusCode >= 400) {
-          if (!isFromBridge) {
-            const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}&from_bridge=1`;
-            return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
-          }
           if (!res.headersSent) {
             return res.status(proxyRes.statusCode).send(`Upstream CDN returned ${proxyRes.statusCode}`);
           }
@@ -635,10 +538,6 @@ app.get('/api/stream', (req, res) => {
       });
 
       request.on('error', (e) => {
-        if (!isFromBridge) {
-          const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}&from_bridge=1`;
-          return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
-        }
         if (!res.headersSent) {
           res.status(502).send('Proxy streaming error: ' + e.message);
         }
@@ -646,10 +545,6 @@ app.get('/api/stream', (req, res) => {
 
       request.on('timeout', () => {
         request.destroy();
-        if (!isFromBridge) {
-          const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}&from_bridge=1`;
-          return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
-        }
         if (!res.headersSent) {
           res.status(504).send('Proxy streaming timeout');
         }
@@ -674,5 +569,5 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 ReelsVault Server running on http://localhost:${PORT}`);
+  console.log(`🚀 ReelsVault Standalone Server running on http://localhost:${PORT}`);
 });
