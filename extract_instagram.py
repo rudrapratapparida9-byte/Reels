@@ -171,6 +171,38 @@ def extract_via_instaloader(shortcode, forced_type=None, story_username=None):
         item_type = forced_type if forced_type else ('reel' if is_video else 'photo')
         owner = story_username or post.owner_username or 'instagram_creator'
 
+        # Extract audio stream from DASH manifest XML if present (for licensed music / separate audio streams)
+        raw = getattr(post, '_node', {}) or {}
+        manifest = raw.get('video_dash_manifest') or ''
+        extracted_audio_url = None
+        if manifest:
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(manifest)
+                for period in root.findall('{urn:mpeg:dash:schema:mpd:2011}Period'):
+                    for adapt in period.findall('{urn:mpeg:dash:schema:mpd:2011}AdaptationSet'):
+                        mime = adapt.get('mimeType') or adapt.get('contentType') or ''
+                        if 'audio' in mime.lower():
+                            for rep in adapt.findall('{urn:mpeg:dash:schema:mpd:2011}Representation'):
+                                base = rep.find('{urn:mpeg:dash:schema:mpd:2011}BaseURL')
+                                if base is not None and base.text:
+                                    extracted_audio_url = base.text.strip()
+                                    break
+            except Exception:
+                pass
+
+        # Music metadata title
+        clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
+        music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
+        music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}
+        if music_meta and music_meta.get('title'):
+            artist = music_meta.get('display_artist') or owner
+            audio_title = f"{artist} • {music_meta.get('title')} (320kbps MP3)"
+        else:
+            audio_title = f"@{owner} • Original Audio (320kbps MP3)"
+
+        audio_url_final = extracted_audio_url or (post.video_url if is_video else None)
+
         return {
             'success': True,
             'id': f"insta_{shortcode}",
@@ -185,8 +217,8 @@ def extract_via_instaloader(shortcode, forced_type=None, story_username=None):
             'videoUrl': post.video_url if is_video else None,
             'thumbnailUrl': post.url,
             'images': images if images else [post.url],
-            'audioTitle': f"@{owner} • Original Audio (320kbps MP3)",
-            'audioUrl': post.video_url if is_video else None,
+            'audioTitle': audio_title,
+            'audioUrl': audio_url_final,
             'duration': duration_text
         }
     except Exception as e:
