@@ -58,7 +58,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.8.0-loop-proof-bridge',
+    version: '2.9.0-success-key-fixed',
     time: new Date().toISOString()
   });
 });
@@ -114,7 +114,7 @@ app.get('/api/instagram', async (req, res) => {
         try {
           const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}`, 25000);
           if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
-            result = bridgePayload.data;
+            result = { ...bridgePayload.data, success: true };
             break;
           }
         } catch (bridgeErr) {
