@@ -107,7 +107,13 @@ def extract_with_ytdlp(url_or_shortcode):
             'no_warnings': True,
             'skip_download': True,
             'extract_flat': False,
-            'nocheckcertificate': True
+            'nocheckcertificate': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                'X-IG-App-ID': '936619743392459',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Sec-Fetch-Site': 'same-origin'
+            }
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             if url_or_shortcode.startswith('http'):
