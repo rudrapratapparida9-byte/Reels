@@ -58,7 +58,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '3.1.0-no-echo-audio',
+    version: '3.2.0-pure-single-stream',
     time: new Date().toISOString()
   });
 });

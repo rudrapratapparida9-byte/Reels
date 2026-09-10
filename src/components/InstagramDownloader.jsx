@@ -888,7 +888,7 @@ export default function InstagramDownloader({
               /* VIEW 4: REELS VIDEO DOWNLOAD CARD */
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 sm:gap-8 items-center">
                 
-                {/* Left Column: 9:16 Vertical Reel Player with Dual-Stream Audio Sync */}
+                {/* Left Column: 9:16 Vertical Reel Player */}
                 <div className="md:col-span-5 flex justify-center">
                   <div className="relative w-full max-w-[280px] aspect-[9/16] bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-200">
                     <video
@@ -899,45 +899,7 @@ export default function InstagramDownloader({
                       controls
                       playsInline
                       loop
-                      muted={Boolean(mediaData.audioUrl && mediaData.audioUrl !== mediaData.videoUrl)}
-                      onPlay={() => {
-                        if (audioPreviewRef.current && mediaData.audioUrl && mediaData.audioUrl !== mediaData.videoUrl) {
-                          audioPreviewRef.current.currentTime = videoPreviewRef.current?.currentTime || 0;
-                          audioPreviewRef.current.volume = videoPreviewRef.current?.volume ?? 1;
-                          audioPreviewRef.current.play().catch(() => {});
-                        }
-                      }}
-                      onPause={() => {
-                        if (audioPreviewRef.current) {
-                          audioPreviewRef.current.pause();
-                        }
-                      }}
-                      onSeeked={() => {
-                        if (audioPreviewRef.current && videoPreviewRef.current) {
-                          audioPreviewRef.current.currentTime = videoPreviewRef.current.currentTime;
-                        }
-                      }}
-                      onVolumeChange={() => {
-                        if (audioPreviewRef.current && videoPreviewRef.current) {
-                          audioPreviewRef.current.volume = videoPreviewRef.current.volume;
-                          if (videoPreviewRef.current.muted) {
-                            audioPreviewRef.current.pause();
-                          } else {
-                            if (!videoPreviewRef.current.paused) {
-                              audioPreviewRef.current.play().catch(() => {});
-                            }
-                          }
-                        }
-                      }}
                     />
-                    {mediaData.audioUrl && mediaData.audioUrl !== mediaData.videoUrl && (
-                      <audio
-                        ref={audioPreviewRef}
-                        src={mediaData.audioUrl}
-                        preload="auto"
-                        className="hidden"
-                      />
-                    )}
                   </div>
                 </div>
 
