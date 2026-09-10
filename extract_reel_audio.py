@@ -240,7 +240,7 @@ def extract_with_ytdlp(url_or_shortcode):
         'videoUrl': video_url or audio_url,
         'videoWithAudioUrl': progressive_url or video_url,
         'videoOnlyUrl': video_only_url or video_url,
-        'hasSeparateAudio': bool(dash_video_url and audio_url and not progressive_url),
+        'hasSeparateAudio': bool(h264_video_url and audio_url and not progressive_url),
         'thumbnailUrl': thumbnail,
         'images': [thumbnail] if thumbnail else [],
         'audioTitle': audio_title,
