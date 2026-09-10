@@ -113,6 +113,16 @@ def extract_with_cobalt(url_or_shortcode):
 
 def extract_with_ytdlp(url_or_shortcode):
     """Extraction using yt-dlp to guarantee audio and video streams."""
+    info = None
+
+    if url_or_shortcode.startswith('http'):
+        target_url = url_or_shortcode
+    elif url_or_shortcode.isdigit():
+        target_url = f"https://www.instagram.com/reels/audio/{url_or_shortcode}/"
+    else:
+        target_url = f"https://www.instagram.com/reel/{url_or_shortcode}/"
+
+    # 1. Try python module
     try:
         import yt_dlp
         ydl_opts = {
@@ -129,15 +139,43 @@ def extract_with_ytdlp(url_or_shortcode):
             }
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            if url_or_shortcode.startswith('http'):
-                target_url = url_or_shortcode
-            elif url_or_shortcode.isdigit():
-                target_url = f"https://www.instagram.com/reels/audio/{url_or_shortcode}/"
-            else:
-                target_url = f"https://www.instagram.com/reel/{url_or_shortcode}/"
             info = ydl.extract_info(target_url, download=False)
-            if not info:
-                return None
+    except Exception:
+        info = None
+
+    # 2. Try standalone yt-dlp binary via subprocess
+    if not info:
+        import subprocess
+        binaries = [
+            os.path.join(os.path.dirname(__file__), 'yt-dlp'),
+            './yt-dlp',
+            'yt-dlp',
+            'yt-dlp.exe'
+        ]
+        for b in binaries:
+            if b.startswith('.') or os.path.isabs(b):
+                if not os.path.exists(b):
+                    continue
+            try:
+                cmd = [
+                    b,
+                    '-j',
+                    '--no-warnings',
+                    '--no-check-certificates',
+                    '--add-header', 'X-IG-App-ID: 936619743392459',
+                    '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                    target_url
+                ]
+                out = subprocess.check_output(cmd, timeout=30, stderr=subprocess.DEVNULL)
+                if out:
+                    info = json.loads(out.decode('utf-8', errors='replace').strip())
+                    if info:
+                        break
+            except Exception:
+                continue
+
+    if not info:
+        return None
             
             formats = info.get('formats', [])
             audio_url = None
