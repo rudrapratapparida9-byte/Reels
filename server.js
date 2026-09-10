@@ -168,7 +168,7 @@ app.get('/api/instagram', async (req, res) => {
 
   try {
     let result = null;
-    const isCloudHost = Boolean(process.env.RENDER || process.env.EXTRACTION_BRIDGE_URL);
+    const isCloudHost = req.hostname !== 'localhost' && req.hostname !== '127.0.0.1';
 
     // 1. Fast Residential Bridge (Only active on Render/Cloud to bypass datacenter IP restrictions)
     if (isCloudHost) {
