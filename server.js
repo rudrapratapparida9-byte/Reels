@@ -202,71 +202,41 @@ app.get('/api/instagram', async (req, res) => {
             if (ytJson) {
               const formats = ytJson.formats || [];
               let audioUrl = null;
-              let videoUrl = null;
+              let dashVideoUrl = null;
+              let progressiveUrl = null;
 
-              // Find audio stream
               for (const f of formats) {
                 const fid = String(f.format_id || '').toLowerCase();
                 const vcodec = String(f.vcodec || '');
                 const acodec = String(f.acodec || '');
-                const resolution = String(f.resolution || '').toLowerCase();
-                if (fid.endsWith('a') || fid.includes('audio') || resolution.includes('audio') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
-                  if (!audioUrl && f.url) {
-                    audioUrl = f.url;
-                    break;
-                  }
-                }
-              }
-              if (!audioUrl) {
-                for (const f of formats) {
-                  const acodec = String(f.acodec || '');
-                  if (acodec && acodec !== 'none' && f.url) {
-                    audioUrl = f.url;
-                    break;
-                  }
-                }
-              }
-
-              // 1. FIRST find progressive format that contains BOTH video and audio
-              for (let i = formats.length - 1; i >= 0; i--) {
-                const f = formats[i];
-                const fid = String(f.format_id || '');
-                const vcodec = String(f.vcodec || '');
-                const acodec = String(f.acodec || '');
                 const url = String(f.url || '');
-                
-                const isProgressive = !fid.endsWith('a') && vcodec !== 'none' && (acodec !== 'none' || url.includes('progressive_recipe=1') || (url.includes('xpv_progressive') && !url.includes('dash')));
-                
-                if (isProgressive) {
-                  videoUrl = f.url;
-                  break;
-                }
-              }
 
-              // 2. Fallback to any video format
-              if (!videoUrl) {
-                for (let i = formats.length - 1; i >= 0; i--) {
-                  const f = formats[i];
-                  const fid = String(f.format_id || '');
-                  const vcodec = String(f.vcodec || '');
-                  if (vcodec !== 'none' && !fid.endsWith('a')) {
-                    videoUrl = f.url;
-                    break;
-                  }
+                if (fid.endsWith('a') || fid.includes('audio') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
+                  if (!audioUrl && f.url) audioUrl = f.url;
+                } else if (fid.endsWith('v') || (vcodec && vcodec !== 'none' && acodec === 'none')) {
+                  if (f.url) dashVideoUrl = f.url;
+                } else if (url && (url.includes('progressive') || url.includes('recipe=1') || (!fid.endsWith('v') && !fid.endsWith('a')))) {
+                  progressiveUrl = f.url;
                 }
               }
 
               const topUrl = ytJson.url || '';
-              if (!videoUrl && topUrl) {
-                videoUrl = topUrl;
+              if (!progressiveUrl && topUrl && (topUrl.includes('progressive') || topUrl.includes('recipe=1'))) {
+                progressiveUrl = topUrl;
               }
 
-              if (!audioUrl) {
-                if (topUrl.includes('xpv_progressive') || topUrl.includes('progressive_recipe=1')) {
-                  audioUrl = topUrl;
-                } else if (videoUrl && (videoUrl.includes('xpv_progressive') || videoUrl.includes('progressive_recipe=1'))) {
-                  audioUrl = videoUrl;
-                }
+              let finalVideoUrl = null;
+              let finalAudioUrl = null;
+
+              if (dashVideoUrl && audioUrl) {
+                finalVideoUrl = dashVideoUrl;
+                finalAudioUrl = audioUrl;
+              } else if (progressiveUrl) {
+                finalVideoUrl = progressiveUrl;
+                finalAudioUrl = audioUrl || progressiveUrl;
+              } else {
+                finalVideoUrl = dashVideoUrl || topUrl;
+                finalAudioUrl = audioUrl || finalVideoUrl;
               }
 
               const uploader = ytJson.uploader || ytJson.uploader_id || 'instagram_creator';
@@ -285,11 +255,11 @@ app.get('/api/instagram', async (req, res) => {
                 likes: ytJson.like_count ? Number(ytJson.like_count).toLocaleString() : 'Trending',
                 comments: ytJson.comment_count ? Number(ytJson.comment_count).toLocaleString() : 'Public',
                 is_video: true,
-                videoUrl: videoUrl || audioUrl,
+                videoUrl: finalVideoUrl,
                 thumbnailUrl: ytJson.thumbnail || null,
                 images: ytJson.thumbnail ? [ytJson.thumbnail] : [],
                 audioTitle: ytJson.track ? `${artist} • ${track} (320kbps MP3)` : `@${uploader} • Original Audio (320kbps MP3)`,
-                audioUrl: audioUrl || videoUrl,
+                audioUrl: finalAudioUrl,
                 duration: ytJson.duration ? `${Math.round(ytJson.duration)}s HD` : 'HD 1080p'
               };
               break;
