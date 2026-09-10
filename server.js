@@ -43,11 +43,21 @@ app.get('/api/instagram', async (req, res) => {
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     };
     try {
-      const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], pyOpts);
+      const pyRes = await execFileAsync('python3', ['extract_reel_audio.py', targetUrl], pyOpts);
       stdout = pyRes.stdout;
     } catch (pyErr) {
-      const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], pyOpts);
-      stdout = pyRes.stdout;
+      try {
+        const pyRes = await execFileAsync('python', ['extract_reel_audio.py', targetUrl], pyOpts);
+        stdout = pyRes.stdout;
+      } catch (pyErr2) {
+        try {
+          const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], pyOpts);
+          stdout = pyRes.stdout;
+        } catch (pyErr3) {
+          const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], pyOpts);
+          stdout = pyRes.stdout;
+        }
+      }
     }
 
     let result;

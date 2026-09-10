@@ -59,11 +59,21 @@ function instagramApiPlugin() {
               env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
             };
             try {
-              const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], pyOpts);
+              const pyRes = await execFileAsync('python', ['extract_reel_audio.py', targetUrl], pyOpts);
               stdout = pyRes.stdout;
             } catch (err1) {
-              const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], pyOpts);
-              stdout = pyRes.stdout;
+              try {
+                const pyRes = await execFileAsync('python3', ['extract_reel_audio.py', targetUrl], pyOpts);
+                stdout = pyRes.stdout;
+              } catch (err2) {
+                try {
+                  const pyRes = await execFileAsync('python', ['extract_instagram.py', targetUrl], pyOpts);
+                  stdout = pyRes.stdout;
+                } catch (err3) {
+                  const pyRes = await execFileAsync('python3', ['extract_instagram.py', targetUrl], pyOpts);
+                  stdout = pyRes.stdout;
+                }
+              }
             }
 
             const result = JSON.parse(stdout.trim());
