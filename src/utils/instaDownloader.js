@@ -69,8 +69,8 @@ async function fetchViaBackendApi(targetUrl) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const controller = new AbortController();
-      // 40 second timeout to accommodate cold starts on free hosts
-      const timeoutId = setTimeout(() => controller.abort(), 40000);
+      // 60 second timeout for cold starts
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
 
       const res = await fetch(`/api/instagram?url=${encodeURIComponent(targetUrl)}`, {
         signal: controller.signal,
@@ -95,15 +95,17 @@ async function fetchViaBackendApi(targetUrl) {
       }
     } catch (e) {
       lastError = e;
-      if (e.name === 'AbortError') {
-        lastError = new Error("The request timed out. Please check your internet connection and try again.");
-      }
-      // If error is a specific message from the server, throw immediately
-      if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('status')) {
+      const isAbort = e.name === 'AbortError' || 
+        (e.message && (e.message.includes('aborted') || e.message.includes('abort') || e.message.includes('timeout')));
+      
+      if (isAbort) {
+        lastError = new Error("The request took longer than expected to process. Please click Retry!");
+      } else if (e.message && !e.message.includes('fetch') && !e.message.includes('Failed to fetch') && !e.message.includes('status')) {
         throw e;
       }
+      
       if (attempt === 1) {
-        await new Promise(r => setTimeout(r, 1200));
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
   }

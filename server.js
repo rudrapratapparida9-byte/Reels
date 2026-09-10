@@ -149,13 +149,14 @@ app.get('/api/debug-ytdlp', async (req, res) => {
   res.json({ targetUrl, results });
 });
 
-const BRIDGE_URL = process.env.EXTRACTION_BRIDGE_URL || 'https://critical-balance-william-soldier.trycloudflare.com';
+const BRIDGE_URL = process.env.EXTRACTION_BRIDGE_URL || '';
 
 function shouldBridge(req) {
+  if (!BRIDGE_URL) return false;
   const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
   const reqHost = (req.headers.host || '').toLowerCase();
   const isSelf = BRIDGE_URL.toLowerCase().includes(reqHost);
-  return !isBridgeRequest && !isSelf && Boolean(BRIDGE_URL);
+  return !isBridgeRequest && !isSelf;
 }
 
 function proxyThroughBridge(req, res, fallback) {
