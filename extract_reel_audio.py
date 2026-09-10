@@ -126,18 +126,19 @@ def extract_with_ytdlp(url_or_shortcode):
             
             # Find separate audio stream (audio-only DASH stream or format ending with 'a')
             for f in formats:
-                fid = str(f.get('format_id', ''))
+                fid = str(f.get('format_id', '')).lower()
                 vcodec = str(f.get('vcodec', ''))
                 acodec = str(f.get('acodec', ''))
-                if fid.endswith('a') or '_audio' in fid.lower() or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec)):
-                    if not audio_url:
+                resolution = str(f.get('resolution', '')).lower()
+                if fid.endswith('a') or 'audio' in fid or 'audio' in resolution or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec)):
+                    if not audio_url and f.get('url'):
                         audio_url = f.get('url')
                         break
             
             if not audio_url:
                 for f in formats:
                     acodec = str(f.get('acodec', ''))
-                    if acodec and acodec != 'none':
+                    if acodec and acodec != 'none' and f.get('url'):
                         audio_url = f.get('url')
                         break
 

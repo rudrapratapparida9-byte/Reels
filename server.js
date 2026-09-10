@@ -72,10 +72,16 @@ app.use(express.static(path.join(__dirname, 'dist'), {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '5.0.0-standalone-turbo',
+    version: '5.2.0-dynamic-remux-sound',
     cachedEntries: mediaCache.size,
     time: new Date().toISOString()
   });
+});
+
+app.get('/api/clear-cache', (req, res) => {
+  const count = mediaCache.size;
+  mediaCache.clear();
+  res.json({ success: true, message: `Cleared ${count} cached media items.` });
 });
 
 function cleanInstagramUrl(rawUrl) {
@@ -168,11 +174,12 @@ app.get('/api/instagram', async (req, res) => {
 
               // Find audio stream
               for (const f of formats) {
-                const fid = String(f.format_id || '');
+                const fid = String(f.format_id || '').toLowerCase();
                 const vcodec = String(f.vcodec || '');
                 const acodec = String(f.acodec || '');
-                if (fid.endsWith('a') || fid.toLowerCase().includes('_audio') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
-                  if (!audioUrl) {
+                const resolution = String(f.resolution || '').toLowerCase();
+                if (fid.endsWith('a') || fid.includes('audio') || resolution.includes('audio') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
+                  if (!audioUrl && f.url) {
                     audioUrl = f.url;
                     break;
                   }
@@ -181,7 +188,7 @@ app.get('/api/instagram', async (req, res) => {
               if (!audioUrl) {
                 for (const f of formats) {
                   const acodec = String(f.acodec || '');
-                  if (acodec && acodec !== 'none') {
+                  if (acodec && acodec !== 'none' && f.url) {
                     audioUrl = f.url;
                     break;
                   }
