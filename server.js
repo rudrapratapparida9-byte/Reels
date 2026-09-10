@@ -111,7 +111,8 @@ app.get('/api/instagram', async (req, res) => {
   }
 
   const targetUrl = cleanInstagramUrl(rawTargetUrl);
-  const isFromBridgeCall = req.headers['x-from-render'] === 'true';
+  const isFromBridgeCall = req.headers['x-from-render'] === 'true' || req.query.from_bridge === '1';
+  const isRender = !!(process.env.RENDER || (process.env.PORT && process.env.PORT !== '5000'));
 
   try {
     let result = null;
@@ -126,14 +127,14 @@ app.get('/api/instagram', async (req, res) => {
 
     const pythonBins = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', 'py'];
 
-    // 1. If not handling an internal bridge call, query residential bridge first (extracts genuine separate DASH audio)
-    if (!isFromBridgeCall) {
+    // 1. If on Render and not handling a bridge call, query residential bridge
+    if (isRender && !isFromBridgeCall) {
       const bridges = [
         'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram'
       ];
       for (const bridge of bridges) {
         try {
-          const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}`, 25000);
+          const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}&from_bridge=1`, 25000);
           if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
             result = { ...bridgePayload.data, success: true };
             break;
