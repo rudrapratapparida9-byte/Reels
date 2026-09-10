@@ -1,10 +1,11 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import http from 'http';
 import https from 'https';
+import ffmpegPath from 'ffmpeg-static';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -201,9 +202,11 @@ app.get('/api/instagram', async (req, res) => {
     const rawAudio = extractRawUrl(result.audioUrl);
     const rawThumb = extractRawUrl(result.thumbnailUrl);
 
-    const proxiedVideoUrl = rawVideo 
-      ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
-      : null;
+    const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
+
+    const proxiedVideoUrl = hasSeparateAudio
+      ? `/api/merge?videoUrl=${encodeURIComponent(rawVideo)}&audioUrl=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
+      : (rawVideo ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true` : null);
 
     const proxiedAudioUrl = rawAudio 
       ? `/api/stream?url=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
@@ -246,6 +249,69 @@ app.get('/api/instagram', async (req, res) => {
   } catch (err) {
     console.error('API Extraction Error:', err.message);
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. API: Merged Video + Audio Stream Route (Fast Multiplexing via FFmpeg)
+app.get('/api/merge', (req, res) => {
+  const videoUrl = req.query.videoUrl;
+  const audioUrl = req.query.audioUrl;
+  const filename = req.query.filename || 'instagram_reel_1080p.mp4';
+  const isInline = req.query.inline === 'true';
+  const isDownload = req.query.download === '1' || !isInline;
+
+  if (!videoUrl) {
+    return res.status(400).send('Missing videoUrl parameter');
+  }
+
+  // If no separate audio is provided, proxy the video directly
+  if (!audioUrl || audioUrl === videoUrl) {
+    return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+  }
+
+  const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+  const disposition = isDownload ? 'attachment' : 'inline';
+
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  try {
+    const ffmpegBin = ffmpegPath || 'ffmpeg';
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: */*\r\n',
+      '-i', videoUrl,
+      '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: */*\r\n',
+      '-i', audioUrl,
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '320k',
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+      '-f', 'mp4',
+      'pipe:1'
+    ];
+
+    const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    proc.stdout.pipe(res);
+
+    proc.on('error', (err) => {
+      console.warn('FFmpeg merge spawn failed, redirecting to raw stream:', err.message);
+      if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+      }
+    });
+
+    req.on('close', () => {
+      try { proc.kill('SIGKILL'); } catch (e) {}
+    });
+  } catch (e) {
+    console.error('Merge route exception:', e.message);
+    if (!res.headersSent) {
+      res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+    }
   }
 });
 

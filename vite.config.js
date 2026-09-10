@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import http from 'http';
 import https from 'https';
+import ffmpegPath from 'ffmpeg-static';
 
 const execFileAsync = promisify(execFile);
 
@@ -87,9 +88,11 @@ function instagramApiPlugin() {
 
             const cleanShortcode = String(result.shortcode || 'media').replace(/[^a-zA-Z0-9_-]/g, '');
 
-            const proxiedVideoUrl = result.videoUrl 
-              ? `/api/stream?url=${encodeURIComponent(result.videoUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
-              : null;
+            const hasSeparateAudio = Boolean(result.audioUrl && result.videoUrl && result.audioUrl !== result.videoUrl);
+
+            const proxiedVideoUrl = hasSeparateAudio
+              ? `/api/merge?videoUrl=${encodeURIComponent(result.videoUrl)}&audioUrl=${encodeURIComponent(result.audioUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
+              : (result.videoUrl ? `/api/stream?url=${encodeURIComponent(result.videoUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true` : null);
 
             const proxiedAudioUrl = result.audioUrl 
               ? `/api/stream?url=${encodeURIComponent(result.audioUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
@@ -135,6 +138,65 @@ function instagramApiPlugin() {
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.end(JSON.stringify({ success: false, error: err.message }));
+          }
+          return;
+        }
+
+        // 2. Merged Video + Audio Stream Route (Fast Multiplexing via FFmpeg)
+        if (urlObj.pathname === '/api/merge') {
+          const videoUrl = urlObj.searchParams.get('videoUrl');
+          const audioUrl = urlObj.searchParams.get('audioUrl');
+          const filename = urlObj.searchParams.get('filename') || 'instagram_reel_1080p.mp4';
+          const isInline = urlObj.searchParams.get('inline') === 'true';
+          const isDownload = urlObj.searchParams.get('download') === '1' || !isInline;
+
+          if (!videoUrl) {
+            res.statusCode = 400;
+            res.end('Missing videoUrl parameter');
+            return;
+          }
+
+          if (!audioUrl || audioUrl === videoUrl) {
+            res.writeHead(302, { Location: `/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}` });
+            res.end();
+            return;
+          }
+
+          const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+          const disposition = isDownload ? 'attachment' : 'inline';
+
+          res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Content-Disposition': `${disposition}; filename="${safeFilename}"`,
+            'Access-Control-Allow-Origin': '*'
+          });
+
+          try {
+            const ffmpegBin = ffmpegPath || 'ffmpeg';
+            const args = [
+              '-hide_banner',
+              '-loglevel', 'error',
+              '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: */*\r\n',
+              '-i', videoUrl,
+              '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: */*\r\n',
+              '-i', audioUrl,
+              '-c:v', 'copy',
+              '-c:a', 'aac',
+              '-b:a', '320k',
+              '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+              '-f', 'mp4',
+              'pipe:1'
+            ];
+
+            const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            proc.stdout.pipe(res);
+
+            req.on('close', () => {
+              try { proc.kill('SIGKILL'); } catch (e) {}
+            });
+          } catch (e) {
+            res.writeHead(302, { Location: `/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}` });
+            res.end();
           }
           return;
         }
