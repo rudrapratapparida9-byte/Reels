@@ -288,6 +288,30 @@ app.get('/api/instagram', async (req, res) => {
       }
     }
 
+    // 3. High-Speed Tunnel Bridge Fallback (for Datacenter IP restrictions on Render)
+    if (!result || !result.success || (result.is_video && !result.audioUrl)) {
+      const bridgeUrls = [
+        'https://critical-balance-william-soldier.trycloudflare.com',
+        process.env.EXTRACTION_BRIDGE_URL
+      ].filter(Boolean);
+
+      for (const bridge of bridgeUrls) {
+        try {
+          const bRes = await fetch(`${bridge}/api/instagram?url=${encodeURIComponent(targetUrl)}`, {
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(12000)
+          });
+          if (bRes.ok) {
+            const bJson = await bRes.json();
+            if (bJson && bJson.success && bJson.data) {
+              result = bJson.data;
+              break;
+            }
+          }
+        } catch (bErr) {}
+      }
+    }
+
     if (!result || !result.success) {
       return res.status(400).json({ success: false, error: (result && result.error) || 'Unable to extract Instagram media. Please make sure the link is from a public post.' });
     }
