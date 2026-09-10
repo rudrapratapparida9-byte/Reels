@@ -203,9 +203,7 @@ app.get('/api/instagram', async (req, res) => {
                 const acodec = String(f.acodec || '');
                 const url = String(f.url || '');
                 
-                const isProgressive = (vcodec && vcodec !== 'none' && acodec && acodec !== 'none' && !fid.endsWith('a')) ||
-                                      url.includes('xpv_progressive') ||
-                                      url.includes('progressive_recipe=1');
+                const isProgressive = !fid.endsWith('a') && vcodec !== 'none' && (acodec !== 'none' || url.includes('progressive_recipe=1') || (url.includes('xpv_progressive') && !url.includes('dash')));
                 
                 if (isProgressive) {
                   videoUrl = f.url;

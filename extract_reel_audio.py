@@ -148,7 +148,7 @@ def extract_with_ytdlp(url_or_shortcode):
                 vcodec = str(f.get('vcodec', ''))
                 acodec = str(f.get('acodec', ''))
                 url = str(f.get('url', ''))
-                if ((vcodec != 'none' and acodec != 'none' and acodec) or 'xpv_progressive' in url or 'progressive_recipe=1' in url) and not fid.endswith('a'):
+                if not fid.endswith('a') and vcodec != 'none' and (acodec != 'none' or 'progressive_recipe=1' in url or ('xpv_progressive' in url and 'dash' not in url)):
                     video_url = f.get('url')
                     break
 
