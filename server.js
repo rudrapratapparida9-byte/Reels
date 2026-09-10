@@ -17,6 +17,14 @@ const PORT = process.env.PORT || 5000;
 // Serve static frontend assets
 app.use(express.static(path.join(__dirname, 'dist')));
 
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: '2.4.0-dash-audio',
+    time: new Date().toISOString()
+  });
+});
+
 function cleanInstagramUrl(rawUrl) {
   if (!rawUrl) return rawUrl;
   let url = rawUrl.trim();
