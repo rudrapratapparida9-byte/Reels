@@ -14,12 +14,13 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Serve static frontend assets with automatic Chrome cache busting
+// Serve static frontend assets with automatic mobile/desktop cache busting
 app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/index.html') {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
+    res.setHeader('Clear-Site-Data', '"cache"');
   }
   next();
 });
@@ -30,6 +31,7 @@ app.use(express.static(path.join(__dirname, 'dist'), {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
+      res.setHeader('Clear-Site-Data', '"cache"');
     }
   }
 }));
@@ -75,7 +77,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '3.6.0-chrome-cache-bust',
+    version: '3.7.0-mobile-cache-purge',
     time: new Date().toISOString()
   });
 });
@@ -548,6 +550,7 @@ app.use((req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
+  res.setHeader('Clear-Site-Data', '"cache"');
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
