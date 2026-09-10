@@ -74,6 +74,19 @@ export function buildDownloadProxyUrl(mediaUrl, filename) {
     }
   }
 
+  // If already an /api/audio URL, preserve 320kbps MP3 transcoding
+  if (mediaUrl.includes('/api/audio')) {
+    try {
+      const parsed = new URL(mediaUrl, window.location.origin);
+      parsed.searchParams.set('filename', filename);
+      parsed.searchParams.set('download', '1');
+      parsed.searchParams.set('inline', 'false');
+      return parsed.pathname + parsed.search;
+    } catch (e) {
+      return `${mediaUrl}&download=1&filename=${encodeURIComponent(filename)}`;
+    }
+  }
+
   let rawUrl = mediaUrl;
   
   // If already an /api/stream proxy URL, parse its target URL

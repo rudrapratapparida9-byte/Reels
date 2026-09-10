@@ -334,7 +334,7 @@ app.get('/api/instagram', async (req, res) => {
       : null;
 
     const proxiedAudioUrl = rawAudio 
-      ? `/api/stream?url=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
+      ? `/api/audio?url=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
       : null;
 
     const proxiedThumbnail = rawThumb 
@@ -442,6 +442,72 @@ app.get('/api/merge', (req, res) => {
   } catch (err) {
     if (!res.headersSent) {
       res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+    }
+  }
+});
+
+// 3. API: Dedicated High-Quality 320kbps MP3 Audio Transcoder Route
+app.get('/api/audio', (req, res) => {
+  let rawUrl = req.query.url;
+  if (Array.isArray(rawUrl)) rawUrl = rawUrl[0];
+  let audioUrl = rawUrl ? String(rawUrl) : '';
+
+  const rawFilename = req.query.filename;
+  const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_audio.mp3'));
+  const isInline = req.query.inline === 'true';
+  const isDownload = req.query.download === '1' || !isInline;
+
+  if (!audioUrl) {
+    return res.status(400).send('Missing audio stream URL');
+  }
+
+  // Unwrap if nested stream URL
+  if (audioUrl.startsWith('/api/stream') || audioUrl.startsWith('/api/audio')) {
+    try {
+      const parsed = new URL(audioUrl, `http://localhost:${PORT}`);
+      audioUrl = parsed.searchParams.get('url') || audioUrl;
+    } catch (e) {}
+  }
+
+  const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+  const disposition = (isInline && !isDownload) ? 'inline' : 'attachment';
+
+  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+
+  try {
+    const ffmpegBin = ffmpegPath || 'ffmpeg';
+    const internalAudio = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(audioUrl)}&inline=true`;
+
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-i', internalAudio,
+      '-c:a', 'libmp3lame',
+      '-b:a', '320k',
+      '-f', 'mp3',
+      'pipe:1'
+    ];
+
+    const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    proc.stdout.pipe(res);
+
+    proc.on('error', (err) => {
+      console.warn('FFmpeg audio transcode failed, falling back to raw stream:', err.message);
+      if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+      }
+    });
+
+    req.on('close', () => {
+      try { proc.kill('SIGKILL'); } catch (e) {}
+    });
+  } catch (err) {
+    if (!res.headersSent) {
+      res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
     }
   }
 });
