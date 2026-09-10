@@ -72,6 +72,7 @@ export default function InstagramDownloader({
   const [openFaqIndex, setOpenFaqIndex] = useState(null);
   const [showAd, setShowAd] = useState(true);
 
+  const inputRef = useRef(null);
   const videoPreviewRef = useRef(null);
   const audioPreviewRef = useRef(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
@@ -120,6 +121,7 @@ export default function InstagramDownloader({
     const targetUrl = (urlToFetch || urlInput).trim();
     if (!targetUrl) {
       setErrorMsg("Please paste a valid Instagram link.");
+      inputRef.current?.focus();
       return;
     }
 
@@ -173,15 +175,22 @@ export default function InstagramDownloader({
 
   const handlePasteFromClipboard = async () => {
     try {
-      const text = await navigator.clipboard.readText();
-      if (text) {
-        setUrlInput(text);
-        handleFetch(text);
+      if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          setUrlInput(text.trim());
+          handleFetch(text.trim());
+          return;
+        }
       }
     } catch (e) {
-      if (urlInput.trim()) {
-        handleFetch(urlInput);
-      }
+      // Permission denied or unsupported in browser
+    }
+
+    if (urlInput.trim()) {
+      handleFetch(urlInput.trim());
+    } else {
+      inputRef.current?.focus();
     }
   };
 
@@ -309,10 +318,18 @@ export default function InstagramDownloader({
 
               {/* Link Input Field */}
               <input
+                ref={inputRef}
                 type="url"
                 placeholder={categoryDetails.placeholder}
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
+                onPaste={(e) => {
+                  const pastedText = e.clipboardData?.getData('text');
+                  if (pastedText && pastedText.trim()) {
+                    setUrlInput(pastedText.trim());
+                    setTimeout(() => handleFetch(pastedText.trim()), 60);
+                  }
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleFetch()}
                 className="w-full bg-transparent text-sm sm:text-base px-2 py-2 text-slate-900 placeholder-slate-400 outline-none font-medium"
               />
