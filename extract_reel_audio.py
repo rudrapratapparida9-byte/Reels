@@ -122,47 +122,38 @@ def extract_with_ytdlp(url_or_shortcode):
             
             formats = info.get('formats', [])
             audio_url = None
-            video_url = None
-            
-            # Find separate audio stream (audio-only DASH stream or format ending with 'a')
+            dash_video_url = None
+            progressive_url = None
+
             for f in formats:
                 fid = str(f.get('format_id', '')).lower()
                 vcodec = str(f.get('vcodec', ''))
                 acodec = str(f.get('acodec', ''))
-                resolution = str(f.get('resolution', '')).lower()
-                if fid.endswith('a') or 'audio' in fid or 'audio' in resolution or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec)):
+                url = str(f.get('url', ''))
+
+                if fid.endswith('a') or 'audio' in fid or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec)):
                     if not audio_url and f.get('url'):
                         audio_url = f.get('url')
-                        break
-            
-            if not audio_url:
-                for f in formats:
-                    acodec = str(f.get('acodec', ''))
-                    if acodec and acodec != 'none' and f.get('url'):
-                        audio_url = f.get('url')
-                        break
+                elif fid.endswith('v') or (vcodec and vcodec != 'none' and acodec == 'none'):
+                    if f.get('url'):
+                        dash_video_url = f.get('url')
+                elif url and ('progressive' in url or 'recipe=1' in url or (not fid.endswith('v') and not fid.endswith('a'))):
+                    progressive_url = f.get('url')
 
-            # Find progressive video stream (WITH BOTH VIDEO AND AUDIO)
-            for f in reversed(formats):
-                fid = str(f.get('format_id', ''))
-                vcodec = str(f.get('vcodec', ''))
-                acodec = str(f.get('acodec', ''))
-                url = str(f.get('url', ''))
-                if not fid.endswith('a') and vcodec != 'none' and (acodec != 'none' or 'progressive_recipe=1' in url or ('xpv_progressive' in url and 'dash' not in url)):
-                    video_url = f.get('url')
-                    break
+            if not progressive_url and info.get('url'):
+                top_url = info.get('url')
+                if 'progressive' in top_url or 'recipe=1' in top_url:
+                    progressive_url = top_url
 
-            # Fallback to any video stream
-            if not video_url:
-                for f in reversed(formats):
-                    fid = str(f.get('format_id', ''))
-                    vcodec = str(f.get('vcodec', ''))
-                    if vcodec != 'none' and not fid.endswith('a'):
-                        video_url = f.get('url')
-                        break
-
-            if not video_url:
-                video_url = info.get('url')
+            if dash_video_url and audio_url:
+                video_url = dash_video_url
+                final_audio_url = audio_url
+            elif progressive_url:
+                video_url = progressive_url
+                final_audio_url = audio_url or progressive_url
+            else:
+                video_url = dash_video_url or info.get('url')
+                final_audio_url = audio_url or video_url
                 
             shortcode = extract_shortcode(url_or_shortcode) or info.get('id', 'media')
             uploader = info.get('uploader') or info.get('uploader_id') or 'instagram_creator'
@@ -203,22 +194,22 @@ def get_reel_audio_and_video(url_or_shortcode):
     """
     Extracts full video URL, thumbnail, and separate audio stream URL (with full sound).
     """
-    # 1. Primary: yt-dlp fast high-quality extraction
+    # 1. Primary: yt-dlp extraction
     yt_data = extract_with_ytdlp(url_or_shortcode)
-    if yt_data and (yt_data.get('videoUrl') or yt_data.get('audioUrl')):
+    if yt_data and yt_data.get('videoUrl') and yt_data.get('audioUrl') and yt_data['videoUrl'] != yt_data['audioUrl']:
         return yt_data
 
     shortcode = extract_shortcode(url_or_shortcode)
     if not shortcode:
-        return {'success': False, 'error': 'Could not find a valid shortcode in URL'}
+        return yt_data or {'success': False, 'error': 'Could not find a valid shortcode in URL'}
 
-    # 2. Secondary: Instaloader fallback
+    # 2. Secondary: Instaloader fallback (parses DASH Manifest for dedicated sound streams)
     if L:
         try:
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             raw = getattr(post, '_node', {}) or {}
             
-            # 1. Video URL from Instagram (prioritize progressive version with built-in audio)
+            # 1. Video URL from Instagram
             video_versions = raw.get('video_versions') or []
             video_url = None
             for vv in video_versions:
@@ -238,20 +229,23 @@ def get_reel_audio_and_video(url_or_shortcode):
             if manifest:
                 try:
                     root = ET.fromstring(manifest)
-                    for period in root.findall('{urn:mpeg:dash:schema:mpd:2011}Period'):
-                        for adapt in period.findall('{urn:mpeg:dash:schema:mpd:2011}AdaptationSet'):
-                            mime = adapt.get('mimeType') or adapt.get('contentType') or ''
-                            if 'audio' in mime.lower():
-                                for rep in adapt.findall('{urn:mpeg:dash:schema:mpd:2011}Representation'):
-                                    base = rep.find('{urn:mpeg:dash:schema:mpd:2011}BaseURL')
-                                    if base is not None and base.text:
-                                        audio_stream_url = base.text.strip()
-                                        break
+                    for rep in root.iter('{urn:mpeg:dash:schema:mpd:2011}Representation'):
+                        rep_id = str(rep.get('id', '')).lower()
+                        mime = str(rep.get('mimeType', '')).lower()
+                        if rep_id.endswith('a') or 'audio' in mime or 'audio' in rep_id:
+                            base = rep.find('{urn:mpeg:dash:schema:mpd:2011}BaseURL')
+                            if base is not None and base.text:
+                                audio_stream_url = base.text.strip()
+                                break
                 except Exception:
                     pass
 
+            # If yt_data had 1080p video, keep 1080p video and attach DASH audio stream
+            if yt_data and yt_data.get('videoUrl'):
+                video_url = yt_data['videoUrl']
+
             # If no separate DASH stream, fallback to main video URL
-            final_audio_url = audio_stream_url or video_url
+            final_audio_url = audio_stream_url or (yt_data and yt_data.get('audioUrl')) or video_url
 
             # 3. Extract Song/Artist Metadata if available
             clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
