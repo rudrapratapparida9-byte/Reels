@@ -47,36 +47,38 @@ app.get('/api/instagram', async (req, res) => {
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     };
 
-    // 1. Try dedicated extract_reel_audio.py across available Python binaries
-    const pythonBins = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', 'py'];
-    for (const bin of pythonBins) {
+    // 1. Query residential bridge first (bypasses datacenter IP blocks & extracts full separate DASH audio)
+    const bridges = [
+      'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram',
+      'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
+    ];
+    for (const bridge of bridges) {
       try {
-        const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
-        if (pyRes && pyRes.stdout) {
-          const parsed = JSON.parse(pyRes.stdout.trim());
-          if (parsed && parsed.success && parsed.username !== '@instagram_creator') {
-            result = parsed;
-            break;
-          }
-        }
-      } catch (err) {}
-    }
-
-    // 2. Query residential bridge immediately (bypasses datacenter IP blocks & fetches full DASH audio)
-    if (!result || !result.success || result.username === '@instagram_creator' || !result.audioUrl || result.audioUrl === result.videoUrl) {
-      const bridges = [
-        'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram',
-        'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
-      ];
-      for (const bridge of bridges) {
-        try {
-          const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(8000) });
+        const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(20000) });
+        if (bridgeRes.ok) {
           const bridgePayload = await bridgeRes.json();
           if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
             result = bridgePayload.data;
             break;
           }
-        } catch (bridgeErr) {}
+        }
+      } catch (bridgeErr) {}
+    }
+
+    // 2. Try dedicated extract_reel_audio.py across available Python binaries
+    if (!result || !result.success) {
+      const pythonBins = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', 'py'];
+      for (const bin of pythonBins) {
+        try {
+          const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
+          if (pyRes && pyRes.stdout) {
+            const parsed = JSON.parse(pyRes.stdout.trim());
+            if (parsed && parsed.success && parsed.username !== '@instagram_creator') {
+              result = parsed;
+              break;
+            }
+          }
+        } catch (err) {}
       }
     }
 
