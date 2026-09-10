@@ -58,7 +58,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '3.3.0-clean-initial-state',
+    version: '3.4.0-robust-fallbacks',
     time: new Date().toISOString()
   });
 });
@@ -105,6 +105,8 @@ app.get('/api/instagram', async (req, res) => {
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     };
 
+    const pythonBins = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', 'py'];
+
     // 1. If not handling an internal bridge call, query residential bridge first (extracts genuine separate DASH audio)
     if (!isFromBridgeCall) {
       const bridges = [
@@ -125,7 +127,6 @@ app.get('/api/instagram', async (req, res) => {
 
     // 2. Try dedicated extract_reel_audio.py across available Python binaries
     if (!result || !result.success) {
-      const pythonBins = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3', 'py'];
       for (const bin of pythonBins) {
         try {
           const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
