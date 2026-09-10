@@ -532,9 +532,15 @@ app.get('/api/instagram', async (req, res) => {
 // 2. API: Merged Video + Audio Stream Route (Fast Multiplexing via FFmpeg)
 app.get('/api/merge', (req, res) => {
   proxyThroughBridge(req, res, () => {
-    const videoUrl = req.query.videoUrl;
-    const audioUrl = req.query.audioUrl;
-    const filename = req.query.filename || 'instagram_reel_1080p.mp4';
+    let rawVideo = req.query.videoUrl;
+    let rawAudio = req.query.audioUrl;
+    if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
+    if (Array.isArray(rawAudio)) rawAudio = rawAudio[0];
+
+    let videoUrl = rawVideo ? String(rawVideo).trim() : '';
+    let audioUrl = rawAudio ? String(rawAudio).trim() : '';
+    const rawFilename = req.query.filename;
+    const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_reel_1080p.mp4'));
     const isInline = req.query.inline === 'true';
     const isDownload = req.query.download === '1' || !isInline;
 
@@ -542,7 +548,25 @@ app.get('/api/merge', (req, res) => {
       return res.status(400).send('Missing videoUrl parameter');
     }
 
-    // If no separate audio is provided, proxy the video directly
+    // Unwrap nested proxy URLs if passed
+    function cleanUrl(u) {
+      if (!u) return '';
+      if (u.includes('/api/stream?url=')) {
+        try {
+          const parsed = new URL(u, `http://localhost:${PORT}`);
+          return parsed.searchParams.get('url') || u;
+        } catch (e) {}
+      }
+      if (u.includes('%26') || u.includes('%3D')) {
+        u = u.replace(/%26/g, '&').replace(/%3D/g, '=');
+      }
+      return u;
+    }
+
+    videoUrl = cleanUrl(videoUrl);
+    audioUrl = cleanUrl(audioUrl);
+
+    // If no separate audio is provided or audio matches video, proxy the video directly
     if (!audioUrl || audioUrl === videoUrl) {
       return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
     }
@@ -553,21 +577,20 @@ app.get('/api/merge', (req, res) => {
     try {
       const ffmpegBin = ffmpegPath || 'ffmpeg';
       const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\nOrigin: https://www.instagram.com\r\nAccept: */*\r\n';
 
       const args = [
         '-hide_banner',
         '-loglevel', 'error',
-        '-user_agent', userAgent,
-        '-headers', 'Referer: https://www.instagram.com/\r\n',
+        '-headers', headersStr,
         '-i', videoUrl,
-        '-user_agent', userAgent,
-        '-headers', 'Referer: https://www.instagram.com/\r\n',
+        '-headers', headersStr,
         '-i', audioUrl,
         '-map', '0:v:0',
         '-map', '1:a:0',
         '-c:v', 'copy',
         '-c:a', 'aac',
-        '-b:a', '320k',
+        '-b:a', '256k',
         '-shortest',
         '-avoid_negative_ts', 'make_zero',
         '-fflags', '+genpts',
@@ -591,18 +614,23 @@ app.get('/api/merge', (req, res) => {
         res.write(chunk);
       });
 
+      proc.stderr.on('data', (errBuf) => {
+        console.warn('FFmpeg merge log:', errBuf.toString());
+      });
+
       proc.stdout.on('end', () => {
         if (hasSentData) {
           res.end();
         } else if (!res.headersSent) {
-          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+          console.warn('FFmpeg produced 0 output bytes, redirecting to raw stream');
+          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
         }
       });
 
       proc.on('error', (err) => {
         console.warn('FFmpeg merge spawn failed, redirecting to raw stream:', err.message);
         if (!hasSentData && !res.headersSent) {
-          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
         }
       });
 
@@ -611,7 +639,7 @@ app.get('/api/merge', (req, res) => {
       });
     } catch (err) {
       if (!res.headersSent) {
-        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
       }
     }
   });
