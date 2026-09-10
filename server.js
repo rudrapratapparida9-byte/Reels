@@ -53,7 +53,7 @@ app.get('/api/instagram', async (req, res) => {
         const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
         if (pyRes && pyRes.stdout) {
           const parsed = JSON.parse(pyRes.stdout.trim());
-          if (parsed && parsed.success) {
+          if (parsed && parsed.success && parsed.username !== '@instagram_creator') {
             result = parsed;
             break;
           }
@@ -61,7 +61,25 @@ app.get('/api/instagram', async (req, res) => {
       } catch (err) {}
     }
 
-    // 2. Direct yt-dlp execution fallback
+    // 2. Query residential bridge immediately (bypasses datacenter IP blocks & fetches full DASH audio)
+    if (!result || !result.success || result.username === '@instagram_creator' || !result.audioUrl || result.audioUrl === result.videoUrl) {
+      const bridges = [
+        'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram',
+        'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
+      ];
+      for (const bridge of bridges) {
+        try {
+          const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(8000) });
+          const bridgePayload = await bridgeRes.json();
+          if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
+            result = bridgePayload.data;
+            break;
+          }
+        } catch (bridgeErr) {}
+      }
+    }
+
+    // 3. Direct yt-dlp execution fallback
     if (!result || !result.success) {
       const ytdlpCommands = [
         { bin: 'yt-dlp', args: ['-j', '--no-warnings', targetUrl] },
@@ -123,7 +141,7 @@ app.get('/api/instagram', async (req, res) => {
       }
     }
 
-    // 3. Try legacy script if still needed
+    // 4. Try legacy script if still needed
     if (!result || !result.success) {
       for (const bin of pythonBins) {
         try {
@@ -136,24 +154,6 @@ app.get('/api/instagram', async (req, res) => {
             }
           }
         } catch (err) {}
-      }
-    }
-
-    // 4. Query residential bridge as last fallback
-    if (!result || !result.success || result.username === '@instagram_creator') {
-      const bridges = [
-        'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram',
-        'https://publish-electricity-armor-friend.trycloudflare.com/api/instagram'
-      ];
-      for (const bridge of bridges) {
-        try {
-          const bridgeRes = await fetch(`${bridge}?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(8000) });
-          const bridgePayload = await bridgeRes.json();
-          if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
-            result = bridgePayload.data;
-            break;
-          }
-        } catch (bridgeErr) {}
       }
     }
 
