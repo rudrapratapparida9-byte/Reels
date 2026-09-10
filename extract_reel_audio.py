@@ -78,7 +78,9 @@ def get_reel_audio_and_video(url_or_shortcode):
         final_audio_url = audio_stream_url or video_url
 
         # 3. Extract Song/Artist Metadata if available
-        music_meta = raw.get('clips_metadata', {}).get('music_info', {}).get('music_asset_info') if raw.get('clips_metadata') else None
+        clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
+        music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
+        music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}
         owner = post.owner_username or 'instagram_creator'
         
         if music_meta and music_meta.get('title'):
