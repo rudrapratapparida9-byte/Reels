@@ -36,21 +36,28 @@ app.use(express.static(path.join(__dirname, 'dist'), {
   }
 }));
 
-function fetchJson(targetUrl, timeoutMs = 25000) {
+function fetchJson(targetUrl, timeoutMs = 10000, options = {}) {
   return new Promise((resolve, reject) => {
     try {
       const parsedUrl = new URL(targetUrl);
       const client = parsedUrl.protocol === 'https:' ? https : http;
-      const req = client.get(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-          'X-From-Render': 'true'
-        },
+      const method = options.method || 'GET';
+      const reqHeaders = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'X-From-Render': 'true',
+        ...(options.headers || {})
+      };
+
+      const reqOpts = {
+        method: method,
+        headers: reqHeaders,
         timeout: timeoutMs
-      }, (res) => {
+      };
+
+      const req = client.request(targetUrl, reqOpts, (res) => {
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`Bridge HTTP status ${res.statusCode}`));
+          return reject(new Error(`HTTP status ${res.statusCode}`));
         }
         let body = '';
         res.setEncoding('utf8');
@@ -63,11 +70,17 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
           }
         });
       });
+
       req.on('error', (err) => reject(err));
       req.on('timeout', () => {
         req.destroy();
         reject(new Error(`Timeout after ${timeoutMs}ms`));
       });
+
+      if (options.body) {
+        req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
+      }
+      req.end();
     } catch (err) {
       reject(err);
     }
@@ -148,12 +161,13 @@ app.get('/api/instagram', async (req, res) => {
     // 1. If on Render and not handling a bridge call, query residential bridge
     if (isRender && !isFromBridgeCall) {
       const bridges = [
+        'https://critical-balance-william-soldier.trycloudflare.com/api/instagram',
         'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram'
       ];
       for (const bridge of bridges) {
         try {
-          const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}&from_bridge=1`, 4500);
-          if (bridgePayload && bridgePayload.success && bridgePayload.data && bridgePayload.data.username !== '@instagram_creator') {
+          const bridgePayload = await fetchJson(`${bridge}?url=${encodeURIComponent(targetUrl)}&from_bridge=1`, 3500);
+          if (bridgePayload && bridgePayload.success && bridgePayload.data && (bridgePayload.data.videoUrl || bridgePayload.data.audioUrl || bridgePayload.data.thumbnailUrl)) {
             result = { ...bridgePayload.data, success: true };
             break;
           }
@@ -170,7 +184,7 @@ app.get('/api/instagram', async (req, res) => {
           const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
           if (pyRes && pyRes.stdout) {
             const parsed = JSON.parse(pyRes.stdout.trim());
-            if (parsed && parsed.success && parsed.username !== '@instagram_creator') {
+            if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
               result = parsed;
               break;
             }
