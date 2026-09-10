@@ -196,6 +196,7 @@ app.get('/api/instagram', async (req, res) => {
     // 3. Direct yt-dlp execution fallback
     if (!result || !result.success) {
       const ytdlpCommands = [
+        { bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', targetUrl] },
         { bin: 'yt-dlp', args: ['-j', '--no-warnings', targetUrl] },
         { bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', targetUrl] },
         { bin: 'python', args: ['-m', 'yt_dlp', '-j', '--no-warnings', targetUrl] }
