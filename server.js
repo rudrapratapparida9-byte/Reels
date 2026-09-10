@@ -204,6 +204,127 @@ function cleanInstagramUrl(rawUrl) {
   return url.split('?')[0].split('#')[0].replace(/\/+$/, '') + '/';
 }
 
+// Automatically ensure yt-dlp binary is downloaded and executable on Linux (Render / Cloud hosts)
+async function ensureYtdlpBinary() {
+  if (process.platform !== 'linux') return;
+  const targetPath = path.join(__dirname, 'yt-dlp');
+  if (fs.existsSync(targetPath)) {
+    try { fs.chmodSync(targetPath, 0o755); } catch (e) {}
+    return;
+  }
+  console.log('Downloading standalone yt-dlp binary for Linux...');
+  try {
+    const file = fs.createWriteStream(targetPath);
+    await new Promise((resolve, reject) => {
+      https.get('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp', (res) => {
+        if (res.statusCode === 302 || res.statusCode === 301) {
+          https.get(res.headers.location, (res2) => {
+            res2.pipe(file);
+            file.on('finish', () => { file.close(); resolve(); });
+          }).on('error', reject);
+        } else {
+          res.pipe(file);
+          file.on('finish', () => { file.close(); resolve(); });
+        }
+      }).on('error', reject);
+    });
+    fs.chmodSync(targetPath, 0o755);
+    console.log('✅ Standalone yt-dlp binary ready!');
+  } catch (err) {
+    console.warn('Could not auto-download yt-dlp binary:', err.message);
+  }
+}
+ensureYtdlpBinary().catch(() => {});
+
+function parseYtdlpInfo(info, targetUrl) {
+  if (!info) return null;
+  const formats = info.formats || [];
+  let audioUrl = null;
+  let dashVideoUrl = null;
+  let progressiveUrl = null;
+
+  for (const f of formats) {
+    const fid = String(f.format_id || '').toLowerCase();
+    const vcodec = String(f.vcodec || '').toLowerCase();
+    const acodec = String(f.acodec || '').toLowerCase();
+    const fUrl = String(f.url || '');
+
+    if (fid.endsWith('a') || fid.includes('audio') || acodec.startsWith('mp4a') || acodec.startsWith('aac') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
+      if (fUrl) audioUrl = fUrl;
+    } else if (fid.endsWith('v') || (vcodec && vcodec !== 'none' && (acodec === 'none' || !acodec))) {
+      if (fUrl) dashVideoUrl = fUrl;
+    } else if (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') {
+      if (fUrl) progressiveUrl = fUrl;
+    }
+  }
+
+  const videoUrl = progressiveUrl || dashVideoUrl || info.url;
+  const finalAudioUrl = audioUrl || progressiveUrl || videoUrl;
+  const videoOnlyUrl = dashVideoUrl || progressiveUrl || videoUrl;
+
+  const shortcode = info.id || (cleanInstagramUrl(targetUrl).match(/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i)?.[1]) || 'media';
+  const uploader = info.uploader || info.uploader_id || 'instagram_creator';
+  const track = info.track || info.title || 'Original Audio';
+  const artist = info.artist || uploader;
+  const audioTitle = info.track ? `${artist} • ${track} (320kbps MP3)` : `@${uploader} • Original Audio (320kbps MP3)`;
+  const thumbnail = info.thumbnail;
+  const duration = info.duration ? `${Math.round(info.duration)}s HD` : 'HD 1080p';
+
+  return {
+    success: true,
+    id: `insta_${shortcode}`,
+    shortcode: shortcode,
+    type: 'reel',
+    title: `Post by @${uploader}`,
+    username: `@${uploader}`,
+    caption: info.description || '',
+    likes: info.like_count ? Number(info.like_count).toLocaleString() : 'Trending',
+    comments: info.comment_count ? Number(info.comment_count).toLocaleString() : 'Public',
+    is_video: true,
+    videoUrl: videoUrl,
+    videoWithAudioUrl: progressiveUrl || videoUrl,
+    videoOnlyUrl: videoOnlyUrl,
+    hasSeparateAudio: Boolean(dashVideoUrl && audioUrl && !progressiveUrl),
+    thumbnailUrl: thumbnail,
+    images: thumbnail ? [thumbnail] : [],
+    audioTitle: audioTitle,
+    audioUrl: finalAudioUrl,
+    duration: duration
+  };
+}
+
+async function extractWithYtdlpDirect(targetUrl) {
+  const bins = [
+    path.join(__dirname, 'yt-dlp'),
+    'yt-dlp',
+    './yt-dlp'
+  ];
+
+  for (const b of bins) {
+    if ((b.startsWith('.') || path.isAbsolute(b)) && !fs.existsSync(b)) continue;
+    try {
+      const args = [
+        '-j',
+        '--no-warnings',
+        '--no-check-certificates',
+        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        '--add-header', 'X-IG-App-ID: 936619743392459',
+        '--add-header', 'Accept-Language: en-US,en;q=0.9',
+        targetUrl
+      ];
+      const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 25000, maxBuffer: 20 * 1024 * 1024 });
+      if (res && res.stdout) {
+        const info = JSON.parse(res.stdout.trim());
+        const parsed = parseYtdlpInfo(info, targetUrl);
+        if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
 // 1. API: Instagram Media Extraction
 app.get('/api/instagram', async (req, res) => {
   const rawTargetUrl = req.query.url;
@@ -223,8 +344,11 @@ app.get('/api/instagram', async (req, res) => {
     let result = null;
     const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
 
-    // 1. Fast Residential Bridge (Active on Render / cloud hosts to bypass datacenter IP restrictions)
-    if (!isBridgeRequest) {
+    // 1. Standalone Direct yt-dlp binary extraction
+    result = await extractWithYtdlpDirect(targetUrl);
+
+    // 2. Fast Residential Bridge
+    if ((!result || !result.success) && !isBridgeRequest) {
       const bridgeUrls = [
         process.env.EXTRACTION_BRIDGE_URL,
         'https://critical-balance-william-soldier.trycloudflare.com'
@@ -247,12 +371,12 @@ app.get('/api/instagram', async (req, res) => {
       }
     }
 
-    // 2. Direct Python Extractor (Fallback if bridge is unavailable)
+    // 3. Direct Python Extractor (Fallback)
     if (!result || !result.success) {
       const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
       const pyOpts = {
         cwd: __dirname,
-        timeout: 10000,
+        timeout: 15000,
         maxBuffer: 20 * 1024 * 1024,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
       };
