@@ -6,7 +6,7 @@ export default function Header({
   setActiveCategory
 }) {
   const tabs = [
-    { id: 'reel', label: 'Reels Video', icon: Video, badge: '1080p' },
+    { id: 'reel', label: 'Reels Video', icon: Video, badge: '1080p + Audio' },
     { id: 'story', label: 'Stories', icon: BookOpen, badge: 'Anon' },
     { id: 'photo', label: 'Photos', icon: ImageIcon, badge: 'HD' },
     { id: 'audio', label: 'Audio MP3', icon: Music, badge: '320k' },
