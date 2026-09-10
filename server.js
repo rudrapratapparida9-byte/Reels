@@ -25,7 +25,8 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
       const req = client.get(targetUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'X-From-Render': 'true'
         },
         timeout: timeoutMs
       }, (res) => {
@@ -57,7 +58,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.7.0-bridge-resolved',
+    version: '2.8.0-loop-proof-bridge',
     time: new Date().toISOString()
   });
 });
@@ -91,6 +92,7 @@ app.get('/api/instagram', async (req, res) => {
   }
 
   const targetUrl = cleanInstagramUrl(rawTargetUrl);
+  const isFromBridgeCall = req.headers['x-from-render'] === 'true';
 
   try {
     let result = null;
@@ -103,13 +105,10 @@ app.get('/api/instagram', async (req, res) => {
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     };
 
-    const isRender = Boolean(process.env.RENDER || process.env.RENDER_SERVICE_ID);
-
-    // 1. If running on Render, query residential bridge first (bypasses datacenter IP blocks & extracts full separate DASH audio)
-    if (isRender) {
+    // 1. If not handling an internal bridge call, query residential bridge first (extracts genuine separate DASH audio)
+    if (!isFromBridgeCall) {
       const bridges = [
-        'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram',
-        'https://carter-figured-dolls-chest.trycloudflare.com/api/instagram'
+        'https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/instagram'
       ];
       for (const bridge of bridges) {
         try {
