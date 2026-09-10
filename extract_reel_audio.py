@@ -15,9 +15,6 @@ import io
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-import socket
-socket.setdefaulttimeout(6)
-
 try:
     import instaloader
     L = instaloader.Instaloader(
@@ -110,7 +107,6 @@ def extract_with_ytdlp(url_or_shortcode):
             'no_warnings': True,
             'skip_download': True,
             'extract_flat': False,
-            'socket_timeout': 5,
             'nocheckcertificate': True
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
