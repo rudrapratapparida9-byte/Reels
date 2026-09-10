@@ -899,9 +899,11 @@ export default function InstagramDownloader({
                       controls
                       playsInline
                       loop
+                      muted={Boolean(mediaData.audioUrl && mediaData.audioUrl !== mediaData.videoUrl)}
                       onPlay={() => {
                         if (audioPreviewRef.current && mediaData.audioUrl && mediaData.audioUrl !== mediaData.videoUrl) {
                           audioPreviewRef.current.currentTime = videoPreviewRef.current?.currentTime || 0;
+                          audioPreviewRef.current.volume = videoPreviewRef.current?.volume ?? 1;
                           audioPreviewRef.current.play().catch(() => {});
                         }
                       }}
@@ -918,7 +920,13 @@ export default function InstagramDownloader({
                       onVolumeChange={() => {
                         if (audioPreviewRef.current && videoPreviewRef.current) {
                           audioPreviewRef.current.volume = videoPreviewRef.current.volume;
-                          audioPreviewRef.current.muted = videoPreviewRef.current.muted;
+                          if (videoPreviewRef.current.muted) {
+                            audioPreviewRef.current.pause();
+                          } else {
+                            if (!videoPreviewRef.current.paused) {
+                              audioPreviewRef.current.play().catch(() => {});
+                            }
+                          }
                         }
                       }}
                     />
