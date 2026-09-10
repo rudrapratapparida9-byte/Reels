@@ -303,10 +303,15 @@ export default function InstagramDownloader({
                 type="url"
                 placeholder={categoryDetails.placeholder}
                 value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
+                onFocus={() => { if (errorMsg) setErrorMsg(null); }}
+                onChange={(e) => {
+                  setUrlInput(e.target.value);
+                  if (errorMsg) setErrorMsg(null);
+                }}
                 onPaste={(e) => {
                   const pastedText = e.clipboardData?.getData('text');
                   if (pastedText && pastedText.trim()) {
+                    if (errorMsg) setErrorMsg(null);
                     setUrlInput(pastedText.trim());
                     setTimeout(() => handleFetch(pastedText.trim()), 60);
                   }
@@ -318,7 +323,10 @@ export default function InstagramDownloader({
               {/* Clear button if input has text */}
               {urlInput && (
                 <button
-                  onClick={() => setUrlInput('')}
+                  onClick={() => {
+                    setUrlInput('');
+                    if (errorMsg) setErrorMsg(null);
+                  }}
                   className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors"
                 >
                   <X className="w-4 h-4" />
