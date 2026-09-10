@@ -77,7 +77,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '4.2.0-tunnel-stream-bridge',
+    version: '4.2.1-tunnel-stream-fix',
     time: new Date().toISOString()
   });
 });
@@ -462,7 +462,7 @@ app.get('/api/stream', (req, res) => {
 
     try {
       let cleanTarget = targetUrl;
-      if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
+      if (!targetUrl.includes('trycloudflare.com') && (cleanTarget.includes('%26') || cleanTarget.includes('%3D'))) {
         cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
       }
 
