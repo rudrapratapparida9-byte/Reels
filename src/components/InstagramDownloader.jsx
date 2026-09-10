@@ -62,7 +62,7 @@ export default function InstagramDownloader({
 }) {
   const [urlInput, setUrlInput] = useState('');
   const [isFetching, setIsFetching] = useState(false);
-  const [mediaData, setMediaData] = useState(DEFAULT_MEDIA);
+  const [mediaData, setMediaData] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
 
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
@@ -380,6 +380,26 @@ export default function InstagramDownloader({
               <span>100% Anonymous</span>
             </div>
           </div>
+
+          {/* Loading Indicator Box */}
+          {isFetching && (
+            <div className="mt-6 p-6 rounded-3xl bg-white/95 backdrop-blur-md border border-indigo-100 shadow-xl shadow-indigo-500/5 text-center space-y-3 animate-fadeIn">
+              <div className="inline-flex p-3 rounded-2xl bg-indigo-50 text-indigo-600">
+                <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-base font-black text-slate-900 font-['Outfit']">
+                  Fetching Instagram Reel Media...
+                </h4>
+                <p className="text-xs text-slate-500 font-medium max-w-md mx-auto">
+                  Extracting original 1080p video, 320kbps MP3 audio track, and high-res cover poster.
+                </p>
+              </div>
+              <div className="w-full max-w-xs mx-auto bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 animate-pulse rounded-full w-3/4 mx-auto" />
+              </div>
+            </div>
+          )}
 
           {/* Error Message Box */}
           {errorMsg && (

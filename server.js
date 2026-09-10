@@ -58,7 +58,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '3.2.0-pure-single-stream',
+    version: '3.3.0-clean-initial-state',
     time: new Date().toISOString()
   });
 });
