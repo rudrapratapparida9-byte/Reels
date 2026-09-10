@@ -181,22 +181,43 @@ app.get('/api/instagram', async (req, res) => {
       return res.status(400).json({ success: false, error: (result && result.error) || 'Failed to extract Instagram media.' });
     }
 
+    function extractRawUrl(streamOrRawUrl) {
+      if (!streamOrRawUrl) return null;
+      if (typeof streamOrRawUrl !== 'string') return streamOrRawUrl;
+      if (streamOrRawUrl.startsWith('/api/stream') || streamOrRawUrl.includes('/api/stream?url=')) {
+        try {
+          const u = new URL(streamOrRawUrl, 'http://localhost');
+          return u.searchParams.get('url') || streamOrRawUrl;
+        } catch (e) {
+          return streamOrRawUrl;
+        }
+      }
+      return streamOrRawUrl;
+    }
+
     const cleanShortcode = String(result.shortcode || 'media').replace(/[^a-zA-Z0-9_-]/g, '');
 
-    const proxiedVideoUrl = result.videoUrl 
-      ? `/api/stream?url=${encodeURIComponent(result.videoUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
+    const rawVideo = extractRawUrl(result.videoUrl);
+    const rawAudio = extractRawUrl(result.audioUrl);
+    const rawThumb = extractRawUrl(result.thumbnailUrl);
+
+    const proxiedVideoUrl = rawVideo 
+      ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
       : null;
 
-    const proxiedAudioUrl = result.audioUrl 
-      ? `/api/stream?url=${encodeURIComponent(result.audioUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
+    const proxiedAudioUrl = rawAudio 
+      ? `/api/stream?url=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_audio.mp3`)}&inline=true`
       : null;
 
-    const proxiedThumbnail = result.thumbnailUrl 
-      ? `/api/stream?url=${encodeURIComponent(result.thumbnailUrl)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_thumb.jpg`)}&inline=true`
+    const proxiedThumbnail = rawThumb 
+      ? `/api/stream?url=${encodeURIComponent(rawThumb)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_thumb.jpg`)}&inline=true`
       : null;
 
     const proxiedImages = (result.images && Array.isArray(result.images)) 
-      ? result.images.map((img, idx) => `/api/stream?url=${encodeURIComponent(img)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_${idx + 1}.jpg`)}&inline=true`)
+      ? result.images.map((img, idx) => {
+          const rawImg = extractRawUrl(img);
+          return `/api/stream?url=${encodeURIComponent(rawImg)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_${idx + 1}.jpg`)}&inline=true`;
+        })
       : (proxiedThumbnail ? [proxiedThumbnail] : []);
 
     const payload = {
