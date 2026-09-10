@@ -373,7 +373,9 @@ app.get('/api/instagram', async (req, res) => {
     const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
 
     const proxiedVideoUrl = rawVideo 
-      ? `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
+      ? (hasSeparateAudio
+          ? `/api/merge?videoUrl=${encodeURIComponent(rawVideo)}&audioUrl=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`
+          : `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_1080p.mp4`)}&inline=true`)
       : null;
 
     const proxiedAudioUrl = rawAudio 
@@ -434,7 +436,7 @@ app.get('/api/merge', (req, res) => {
 
   // If no separate audio is provided, proxy the video directly
   if (!audioUrl || audioUrl === videoUrl) {
-    return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+    return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
   }
 
   const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
@@ -443,16 +445,20 @@ app.get('/api/merge', (req, res) => {
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
 
   try {
     const ffmpegBin = ffmpegPath || 'ffmpeg';
+    // Stream video & audio through internal stream proxy
+    const internalVideo = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(videoUrl)}&inline=true`;
+    const internalAudio = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(audioUrl)}&inline=true`;
+
     const args = [
       '-hide_banner',
       '-loglevel', 'error',
-      '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: */*\r\n',
-      '-i', videoUrl,
-      '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: */*\r\n',
-      '-i', audioUrl,
+      '-i', internalVideo,
+      '-i', internalAudio,
       '-c:v', 'copy',
       '-c:a', 'aac',
       '-b:a', '320k',
@@ -475,8 +481,7 @@ app.get('/api/merge', (req, res) => {
     req.on('close', () => {
       try { proc.kill('SIGKILL'); } catch (e) {}
     });
-  } catch (e) {
-    console.error('Merge route exception:', e.message);
+  } catch (err) {
     if (!res.headersSent) {
       res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
     }
