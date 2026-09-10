@@ -420,10 +420,15 @@ app.get('/api/merge', (req, res) => {
 
 // 2. API: Media Stream & Proxy Route
 app.get('/api/stream', (req, res) => {
-  let streamUrl = req.query.url;
-  const filename = req.query.filename || 'instagram_media.mp4';
+  let rawStreamUrl = req.query.url;
+  if (Array.isArray(rawStreamUrl)) rawStreamUrl = rawStreamUrl[0];
+  let streamUrl = rawStreamUrl ? String(rawStreamUrl) : '';
+
+  const rawFilename = req.query.filename;
+  const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_media.mp4'));
   const isInline = req.query.inline === 'true';
   const isDownload = req.query.download === '1' || !isInline;
+  const isFromBridge = req.query.from_bridge === '1' || req.headers['x-from-render'] === 'true';
 
   const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
   const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
@@ -437,7 +442,7 @@ app.get('/api/stream', (req, res) => {
   if (streamUrl.startsWith('/api/stream')) {
     try {
       const parsed = new URL(streamUrl, 'http://localhost:5000');
-      streamUrl = parsed.searchParams.get('url');
+      streamUrl = parsed.searchParams.get('url') || '';
       if (!streamUrl) return res.status(400).send('Invalid stream URL.');
     } catch (e) {
       return res.status(400).send('Invalid stream URL.');
@@ -445,27 +450,33 @@ app.get('/api/stream', (req, res) => {
   }
 
   // Normalize URL encoding (fix double-encoded & and = from CDN signatures)
-  if (streamUrl.includes('%26') || streamUrl.includes('%3D') || streamUrl.includes('%2F')) {
-    streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=').replace(/%2F/g, '/');
+  if (streamUrl.includes('%26') || streamUrl.includes('%3D')) {
+    streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
   }
 
   const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
     if (redirectCount > 5) {
-      return res.status(500).send('Too many redirects');
+      if (!res.headersSent) res.status(500).send('Too many redirects');
+      return;
     }
 
     try {
-      // Fix parameter encoding for downstream CDNs
       let cleanTarget = targetUrl;
       if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
         cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
       }
 
       const targetObj = new URL(cleanTarget);
-      const client = targetObj.protocol === 'https:' ? https : http;
-
       const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
+      const isRender = !!(process.env.RENDER || (process.env.PORT && process.env.PORT !== '5000'));
 
+      // If running on Render and accessing a Meta CDN domain without bridge, route to residential bridge
+      if (isRender && isMetaDomain && !isFromBridge) {
+        const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}&from_bridge=1`;
+        return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
+      }
+
+      const client = targetObj.protocol === 'https:' ? https : http;
       const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         'Accept': '*/*'
@@ -480,17 +491,15 @@ app.get('/api/stream', (req, res) => {
         headers['Range'] = req.headers.range;
       }
 
-      const request = client.get(cleanTarget, { headers, timeout: 20000 }, (proxyRes) => {
+      const request = client.get(cleanTarget, { headers, timeout: 25000 }, (proxyRes) => {
         if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
           const nextUrl = new URL(proxyRes.headers.location, cleanTarget).toString();
           return fetchWithRedirects(nextUrl, redirectCount + 1);
         }
 
         if (proxyRes.statusCode >= 400) {
-          // If on Render and upstream rejected direct cloud fetch, pipe through residential tunnel bridge
-          const isFromBridgeCall = req.headers['x-from-render'] === 'true';
-          if (!isFromBridgeCall) {
-            const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`;
+          if (!isFromBridge) {
+            const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}&from_bridge=1`;
             return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
           }
           if (!res.headersSent) {
@@ -530,9 +539,8 @@ app.get('/api/stream', (req, res) => {
       });
 
       request.on('error', (e) => {
-        const isFromBridgeCall = req.headers['x-from-render'] === 'true';
-        if (!isFromBridgeCall) {
-          const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`;
+        if (!isFromBridge) {
+          const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}&from_bridge=1`;
           return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
         }
         if (!res.headersSent) {
@@ -542,6 +550,10 @@ app.get('/api/stream', (req, res) => {
 
       request.on('timeout', () => {
         request.destroy();
+        if (!isFromBridge) {
+          const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}&from_bridge=1`;
+          return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
+        }
         if (!res.headersSent) {
           res.status(504).send('Proxy streaming timeout');
         }
