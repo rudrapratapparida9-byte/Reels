@@ -77,7 +77,7 @@ function fetchJson(targetUrl, timeoutMs = 25000) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '3.8.0-zero-fallback-purity',
+    version: '4.1.0-cdn-signature-normalized',
     time: new Date().toISOString()
   });
 });
@@ -444,22 +444,30 @@ app.get('/api/stream', (req, res) => {
     }
   }
 
-  const fetchWithRedirects = (targetUrl, redirectCount = 0, isFallback = false) => {
+  // Normalize URL encoding (fix double-encoded & and = from CDN signatures)
+  if (streamUrl.includes('%26') || streamUrl.includes('%3D') || streamUrl.includes('%2F')) {
+    streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=').replace(/%2F/g, '/');
+  }
+
+  const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
     if (redirectCount > 5) {
-      if (!isFallback) {
-        return fetchWithRedirects(fallbackUrl, 0, true);
-      }
       return res.status(500).send('Too many redirects');
     }
 
     try {
-      const targetObj = new URL(targetUrl);
+      // Fix parameter encoding for downstream CDNs
+      let cleanTarget = targetUrl;
+      if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
+        cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
+      }
+
+      const targetObj = new URL(cleanTarget);
       const client = targetObj.protocol === 'https:' ? https : http;
 
       const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
 
       const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         'Accept': '*/*'
       };
 
@@ -472,15 +480,17 @@ app.get('/api/stream', (req, res) => {
         headers['Range'] = req.headers.range;
       }
 
-      const request = client.get(targetUrl, { headers, timeout: 12000 }, (proxyRes) => {
+      const request = client.get(cleanTarget, { headers, timeout: 20000 }, (proxyRes) => {
         if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-          const nextUrl = new URL(proxyRes.headers.location, targetUrl).toString();
-          return fetchWithRedirects(nextUrl, redirectCount + 1, isFallback);
+          const nextUrl = new URL(proxyRes.headers.location, cleanTarget).toString();
+          return fetchWithRedirects(nextUrl, redirectCount + 1);
         }
 
-        // If upstream rejected the request (403 Forbidden or 404), seamlessly fallback to working media
-        if (proxyRes.statusCode >= 400 && !isFallback) {
-          return fetchWithRedirects(fallbackUrl, 0, true);
+        if (proxyRes.statusCode >= 400) {
+          if (!res.headersSent) {
+            return res.status(proxyRes.statusCode).send(`Upstream CDN returned ${proxyRes.statusCode}`);
+          }
+          return;
         }
 
         if (res.headersSent) return;
@@ -514,24 +524,18 @@ app.get('/api/stream', (req, res) => {
       });
 
       request.on('error', (e) => {
-        if (!isFallback) {
-          return fetchWithRedirects(fallbackUrl, 0, true);
-        }
         if (!res.headersSent) {
-          res.status(500).send('Proxy streaming error: ' + e.message);
+          res.status(502).send('Proxy streaming error: ' + e.message);
         }
       });
 
       request.on('timeout', () => {
         request.destroy();
-        if (!isFallback) {
-          return fetchWithRedirects(fallbackUrl, 0, true);
+        if (!res.headersSent) {
+          res.status(504).send('Proxy streaming timeout');
         }
       });
     } catch (e) {
-      if (!isFallback) {
-        return fetchWithRedirects(fallbackUrl, 0, true);
-      }
       if (!res.headersSent) {
         res.status(500).send('Proxy error: ' + e.message);
       }
