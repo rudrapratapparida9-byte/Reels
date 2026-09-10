@@ -81,6 +81,16 @@ app.get('/robots.txt', (req, res) => {
   res.send("User-agent: *\nAllow: /\nSitemap: https://reels-1-nvfo.onrender.com/sitemap.xml\n");
 });
 
+app.get('/sitemap.xml', (req, res) => {
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  const sitemapPath = path.join(__dirname, 'public', 'sitemap.xml');
+  if (fs.existsSync(sitemapPath)) {
+    return res.sendFile(sitemapPath);
+  }
+  res.send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://reels-1-nvfo.onrender.com/</loc><priority>1.0</priority></url></urlset>');
+});
+
 app.use(express.static(path.join(__dirname, 'dist'), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('index.html')) {
@@ -1011,6 +1021,37 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
+// Built-in Auto Keep-Alive for Render Free Tier (pings every 8 minutes)
+function startKeepAlive() {
+  const targetUrl = process.env.RENDER_EXTERNAL_URL || 'https://reels-1-nvfo.onrender.com';
+  const PING_INTERVAL = 8 * 60 * 1000; // 8 minutes
+
+  setInterval(() => {
+    try {
+      const pingUrl = `${targetUrl.replace(/\/+$/, '')}/api/health`;
+      const client = pingUrl.startsWith('https') ? https : http;
+      
+      const pingReq = client.get(pingUrl, { timeout: 10000 }, (resp) => {
+        resp.resume();
+        console.log(`[Keep-Alive] Self-ping status ${resp.statusCode} at ${new Date().toISOString()}`);
+      });
+
+      pingReq.on('error', (err) => {
+        console.log(`[Keep-Alive] Ping notice: ${err.message}`);
+      });
+
+      pingReq.on('timeout', () => {
+        pingReq.destroy();
+      });
+    } catch (e) {
+      console.log(`[Keep-Alive] Error:`, e.message);
+    }
+  }, PING_INTERVAL);
+
+  console.log(`[Keep-Alive] Background worker active for ${targetUrl}`);
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 ReelsVault Standalone Server running on http://localhost:${PORT}`);
+  startKeepAlive();
 });
