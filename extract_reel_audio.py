@@ -57,7 +57,9 @@ def extract_with_ytdlp(url_or_shortcode):
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
-            'extract_flat': False
+            'extract_flat': False,
+            'socket_timeout': 6,
+            'nocheckcertificate': True
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             if url_or_shortcode.startswith('http'):

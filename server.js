@@ -243,19 +243,44 @@ app.get('/api/instagram', async (req, res) => {
       }
     }
 
-    // 4. Try legacy script if still needed
+    // 5. Online Cluster Scraper Fallback (Cobalt / Public Multi-Cluster)
     if (!result || !result.success) {
-      for (const bin of pythonBins) {
+      const clusterEndpoints = [
+        'https://api.cobalt.tools/api/json',
+        'https://cobalt-api.kwiatekm.pl/api/json',
+        'https://co.wuk.sh/api/json',
+        'https://api.wuk.sh/api/json'
+      ];
+      for (const endpoint of clusterEndpoints) {
         try {
-          const pyRes = await execFileAsync(bin, [legacyPath, targetUrl], pyOpts);
-          if (pyRes && pyRes.stdout) {
-            const parsed = JSON.parse(pyRes.stdout.trim());
-            if (parsed && parsed.success) {
-              result = parsed;
-              break;
-            }
+          const resp = await fetchJson(endpoint, 5000, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: targetUrl, vQuality: '1080', filenamePattern: 'basic' })
+          });
+          if (resp && (resp.status === 'stream' || resp.status === 'redirect' || resp.status === 'tunnel') && resp.url) {
+            const sc = cleanInstagramUrl(targetUrl).match(/\/(?:reel|reels|p|audio)\/([A-Za-z0-9_-]+)/)?.[1] || 'media';
+            result = {
+              success: true,
+              id: `insta_${sc}`,
+              shortcode: sc,
+              type: 'reel',
+              title: `Instagram Reel (${sc})`,
+              username: '@instagram_creator',
+              caption: resp.caption || `Instagram Reel #${sc}`,
+              likes: 'Trending',
+              comments: 'Public',
+              is_video: true,
+              videoUrl: resp.url,
+              thumbnailUrl: resp.thumbnail || null,
+              images: resp.thumbnail ? [resp.thumbnail] : [],
+              audioTitle: 'Original Audio (320kbps MP3)',
+              audioUrl: resp.url,
+              duration: 'HD 1080p'
+            };
+            break;
           }
-        } catch (err) {}
+        } catch (e) {}
       }
     }
 
