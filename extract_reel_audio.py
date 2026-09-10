@@ -4,12 +4,25 @@ Extracts both Video stream and dedicated Audio track (with full DASH manifest so
 """
 
 import sys
+import os
 import json
 import re
+import site
 import xml.etree.ElementTree as ET
 import urllib.request
 import urllib.parse
 import io
+
+# Ensure site-packages and user packages on Linux/Render/Cloud hosts are in sys.path
+try:
+    if hasattr(site, 'getusersitepackages') and os.path.exists(site.getusersitepackages()):
+        sys.path.append(site.getusersitepackages())
+    if hasattr(site, 'getsitepackages'):
+        for p in site.getsitepackages():
+            if p not in sys.path:
+                sys.path.append(p)
+except Exception:
+    pass
 
 # Force UTF-8 standard output for Unicode / Emoji compatibility
 if hasattr(sys.stdout, 'buffer'):

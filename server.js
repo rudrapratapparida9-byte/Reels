@@ -408,15 +408,15 @@ app.get('/api/merge', (req, res) => {
 
   try {
     const ffmpegBin = ffmpegPath || 'ffmpeg';
-    // Stream video & audio through internal stream proxy
-    const internalVideo = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(videoUrl)}&inline=true`;
-    const internalAudio = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(audioUrl)}&inline=true`;
+    const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
 
     const args = [
       '-hide_banner',
       '-loglevel', 'error',
-      '-i', internalVideo,
-      '-i', internalAudio,
+      '-headers', headersStr,
+      '-i', videoUrl,
+      '-headers', headersStr,
+      '-i', audioUrl,
       '-c:v', 'copy',
       '-c:a', 'aac',
       '-b:a', '320k',
@@ -480,12 +480,13 @@ app.get('/api/audio', (req, res) => {
 
   try {
     const ffmpegBin = ffmpegPath || 'ffmpeg';
-    const internalAudio = `http://127.0.0.1:${PORT}/api/stream?url=${encodeURIComponent(audioUrl)}&inline=true`;
+    const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
 
     const args = [
       '-hide_banner',
       '-loglevel', 'error',
-      '-i', internalAudio,
+      '-headers', headersStr,
+      '-i', audioUrl,
       '-c:a', 'libmp3lame',
       '-b:a', '320k',
       '-f', 'mp3',
