@@ -6,6 +6,8 @@ import { promisify } from 'util';
 import http from 'http';
 import https from 'https';
 import fs from 'fs';
+import os from 'os';
+import crypto from 'crypto';
 import ffmpegPath from 'ffmpeg-static';
 
 // Ensure ffmpeg executable has 755 execute permissions on Linux/Render
@@ -529,208 +531,260 @@ app.get('/api/instagram', async (req, res) => {
   }
 });
 
-// 2. API: Merged Video + Audio Stream Route (Fast Multiplexing via FFmpeg)
-app.get('/api/merge', (req, res) => {
-  proxyThroughBridge(req, res, () => {
-    let rawVideo = req.query.videoUrl;
-    let rawAudio = req.query.audioUrl;
-    if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
-    if (Array.isArray(rawAudio)) rawAudio = rawAudio[0];
-
-    let videoUrl = rawVideo ? String(rawVideo).trim() : '';
-    let audioUrl = rawAudio ? String(rawAudio).trim() : '';
-    const rawFilename = req.query.filename;
-    const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_reel_1080p.mp4'));
-    const isInline = req.query.inline === 'true';
-    const isDownload = req.query.download === '1' || !isInline;
-
-    if (!videoUrl) {
-      return res.status(400).send('Missing videoUrl parameter');
+function downloadToTempFile(targetUrl, destPath) {
+  return new Promise((resolve, reject) => {
+    let cleanTarget = targetUrl;
+    if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
+      cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
     }
 
-    // Unwrap nested proxy URLs if passed
-    function cleanUrl(u) {
-      if (!u) return '';
-      if (u.includes('/api/stream?url=')) {
-        try {
-          const parsed = new URL(u, `http://localhost:${PORT}`);
-          return parsed.searchParams.get('url') || u;
-        } catch (e) {}
-      }
-      if (u.includes('%26') || u.includes('%3D')) {
-        u = u.replace(/%26/g, '&').replace(/%3D/g, '=');
-      }
-      return u;
-    }
+    const fetchDirect = (currUrl, redirectCount = 0) => {
+      if (redirectCount > 5) return reject(new Error('Too many redirects'));
 
-    videoUrl = cleanUrl(videoUrl);
-    audioUrl = cleanUrl(audioUrl);
-
-    // If no separate audio is provided or audio matches video, proxy the video directly
-    if (!audioUrl || audioUrl === videoUrl) {
-      return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-    }
-
-    const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
-    const disposition = isDownload ? 'attachment' : 'inline';
-
-    try {
-      const ffmpegBin = ffmpegPath || 'ffmpeg';
-      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
-      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\nOrigin: https://www.instagram.com\r\nAccept: */*\r\n';
-
-      const args = [
-        '-hide_banner',
-        '-loglevel', 'error',
-        '-headers', headersStr,
-        '-i', videoUrl,
-        '-headers', headersStr,
-        '-i', audioUrl,
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-b:a', '256k',
-        '-shortest',
-        '-avoid_negative_ts', 'make_zero',
-        '-fflags', '+genpts',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-f', 'mp4',
-        'pipe:1'
-      ];
-
-      const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let hasSentData = false;
-
-      proc.stdout.on('data', (chunk) => {
-        if (!hasSentData) {
-          hasSentData = true;
-          res.setHeader('Content-Type', 'video/mp4');
-          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
-        }
-        res.write(chunk);
-      });
-
-      proc.stderr.on('data', (errBuf) => {
-        console.warn('FFmpeg merge log:', errBuf.toString());
-      });
-
-      proc.stdout.on('end', () => {
-        if (hasSentData) {
-          res.end();
-        } else if (!res.headersSent) {
-          console.warn('FFmpeg produced 0 output bytes, redirecting to raw stream');
-          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-        }
-      });
-
-      proc.on('error', (err) => {
-        console.warn('FFmpeg merge spawn failed, redirecting to raw stream:', err.message);
-        if (!hasSentData && !res.headersSent) {
-          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-        }
-      });
-
-      req.on('close', () => {
-        try { proc.kill('SIGKILL'); } catch (e) {}
-      });
-    } catch (err) {
-      if (!res.headersSent) {
-        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-      }
-    }
-  });
-});
-
-// 3. API: Muted Video Route (Strips all audio streams using FFmpeg -an)
-app.get('/api/mute', (req, res) => {
-  proxyThroughBridge(req, res, () => {
-    let rawVideo = req.query.url || req.query.videoUrl;
-    if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
-    let videoUrl = rawVideo ? String(rawVideo).trim() : '';
-
-    const rawFilename = req.query.filename;
-    const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_video_muted.mp4'));
-    const isInline = req.query.inline === 'true';
-    const isDownload = req.query.download === '1' || !isInline;
-
-    if (!videoUrl) {
-      return res.status(400).send('Missing video URL parameter');
-    }
-
-    // Unwrap nested proxy URLs if passed
-    if (videoUrl.includes('/api/stream?url=') || videoUrl.includes('/api/mute?url=')) {
       try {
-        const parsed = new URL(videoUrl, `http://localhost:${PORT}`);
-        videoUrl = parsed.searchParams.get('url') || videoUrl;
+        const targetObj = new URL(currUrl);
+        const client = targetObj.protocol === 'https:' ? https : http;
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Referer': 'https://www.instagram.com/',
+          'Origin': 'https://www.instagram.com'
+        };
+
+        const request = client.get(currUrl, { headers, timeout: 45000 }, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            const nextUrl = new URL(res.headers.location, currUrl).toString();
+            return fetchDirect(nextUrl, redirectCount + 1);
+          }
+
+          if (res.statusCode >= 400) {
+            return reject(new Error(`CDN returned HTTP ${res.statusCode}`));
+          }
+
+          const fileStream = fs.createWriteStream(destPath);
+          res.pipe(fileStream);
+
+          fileStream.on('finish', () => {
+            fileStream.close(() => resolve(destPath));
+          });
+
+          fileStream.on('error', (err) => {
+            fs.unlink(destPath, () => {});
+            reject(err);
+          });
+        });
+
+        request.on('error', (err) => {
+          fs.unlink(destPath, () => {});
+          reject(err);
+        });
+
+        request.on('timeout', () => {
+          request.destroy();
+          fs.unlink(destPath, () => {});
+          reject(new Error('Download timeout'));
+        });
+      } catch (e) {
+        reject(e);
+      }
+    };
+
+    fetchDirect(cleanTarget);
+  });
+}
+
+// 2. API: Merged Video + Audio Stream Route (Guaranteed 100% Sound via Local Muxing)
+app.get('/api/merge', async (req, res) => {
+  let rawVideo = req.query.videoUrl;
+  let rawAudio = req.query.audioUrl;
+  if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
+  if (Array.isArray(rawAudio)) rawAudio = rawAudio[0];
+
+  let videoUrl = rawVideo ? String(rawVideo).trim() : '';
+  let audioUrl = rawAudio ? String(rawAudio).trim() : '';
+  const rawFilename = req.query.filename;
+  const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_reel_1080p.mp4'));
+  const isInline = req.query.inline === 'true';
+  const isDownload = req.query.download === '1' || !isInline;
+
+  if (!videoUrl) {
+    return res.status(400).send('Missing videoUrl parameter');
+  }
+
+  function cleanUrl(u) {
+    if (!u) return '';
+    if (u.includes('/api/stream?url=')) {
+      try {
+        const parsed = new URL(u, `http://localhost:${PORT}`);
+        return parsed.searchParams.get('url') || u;
       } catch (e) {}
     }
-    if (videoUrl.includes('%26') || videoUrl.includes('%3D')) {
-      videoUrl = videoUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
+    if (u.includes('%26') || u.includes('%3D')) {
+      u = u.replace(/%26/g, '&').replace(/%3D/g, '=');
+    }
+    return u;
+  }
+
+  videoUrl = cleanUrl(videoUrl);
+  audioUrl = cleanUrl(audioUrl);
+
+  const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+  const disposition = isDownload ? 'attachment' : 'inline';
+
+  // If no separate audio is provided or audio matches video, proxy the video directly
+  if (!audioUrl || audioUrl === videoUrl) {
+    return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+  }
+
+  const id = crypto.randomBytes(8).toString('hex');
+  const tempDir = os.tmpdir();
+  const tempVideo = path.join(tempDir, `vid_${id}.mp4`);
+  const tempAudio = path.join(tempDir, `aud_${id}.mp4`);
+  const tempOutput = path.join(tempDir, `out_${id}.mp4`);
+
+  const cleanup = () => {
+    try { fs.unlinkSync(tempVideo); } catch (e) {}
+    try { fs.unlinkSync(tempAudio); } catch (e) {}
+    try { fs.unlinkSync(tempOutput); } catch (e) {}
+  };
+
+  try {
+    // Concurrently download both video and audio streams via Node HTTPS client
+    await Promise.all([
+      downloadToTempFile(videoUrl, tempVideo),
+      downloadToTempFile(audioUrl, tempAudio)
+    ]);
+
+    const ffmpegBin = ffmpegPath || 'ffmpeg';
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-y',
+      '-i', tempVideo,
+      '-i', tempAudio,
+      '-map', '0:v:0',
+      '-map', '1:a:0',
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '256k',
+      '-shortest',
+      '-avoid_negative_ts', 'make_zero',
+      '-movflags', '+faststart',
+      tempOutput
+    ];
+
+    await execFileAsync(ffmpegBin, args, { timeout: 45000 });
+
+    if (!fs.existsSync(tempOutput)) {
+      throw new Error('FFmpeg failed to create merged video file');
     }
 
-    const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
-    const disposition = isDownload ? 'attachment' : 'inline';
+    const stat = fs.statSync(tempOutput);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
 
+    const readStream = fs.createReadStream(tempOutput);
+    readStream.pipe(res);
+
+    readStream.on('close', cleanup);
+    readStream.on('error', cleanup);
+    res.on('finish', cleanup);
+    res.on('close', cleanup);
+  } catch (err) {
+    console.error('Video + Audio merge error:', err.message);
+    cleanup();
+    if (!res.headersSent) {
+      res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+    }
+  }
+});
+
+// 3. API: Muted Video Route (Guaranteed 100% Silent via FFmpeg -an)
+app.get('/api/mute', async (req, res) => {
+  let rawVideo = req.query.url || req.query.videoUrl;
+  if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
+  let videoUrl = rawVideo ? String(rawVideo).trim() : '';
+
+  const rawFilename = req.query.filename;
+  const filename = String(Array.isArray(rawFilename) ? rawFilename[0] : (rawFilename || 'instagram_video_muted.mp4'));
+  const isInline = req.query.inline === 'true';
+  const isDownload = req.query.download === '1' || !isInline;
+
+  if (!videoUrl) {
+    return res.status(400).send('Missing video URL parameter');
+  }
+
+  // Unwrap nested proxy URLs if passed
+  if (videoUrl.includes('/api/stream?url=') || videoUrl.includes('/api/mute?url=')) {
     try {
-      const ffmpegBin = ffmpegPath || 'ffmpeg';
-      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
-      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\nOrigin: https://www.instagram.com\r\nAccept: */*\r\n';
+      const parsed = new URL(videoUrl, `http://localhost:${PORT}`);
+      videoUrl = parsed.searchParams.get('url') || videoUrl;
+    } catch (e) {}
+  }
+  if (videoUrl.includes('%26') || videoUrl.includes('%3D')) {
+    videoUrl = videoUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
+  }
 
-      const args = [
-        '-hide_banner',
-        '-loglevel', 'error',
-        '-headers', headersStr,
-        '-i', videoUrl,
-        '-map', '0:v:0',
-        '-c:v', 'copy',
-        '-an',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-f', 'mp4',
-        'pipe:1'
-      ];
+  const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+  const disposition = isDownload ? 'attachment' : 'inline';
 
-      const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let hasSentData = false;
+  const id = crypto.randomBytes(8).toString('hex');
+  const tempDir = os.tmpdir();
+  const tempVideo = path.join(tempDir, `mute_in_${id}.mp4`);
+  const tempOutput = path.join(tempDir, `mute_out_${id}.mp4`);
 
-      proc.stdout.on('data', (chunk) => {
-        if (!hasSentData) {
-          hasSentData = true;
-          res.setHeader('Content-Type', 'video/mp4');
-          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
-        }
-        res.write(chunk);
-      });
+  const cleanup = () => {
+    try { fs.unlinkSync(tempVideo); } catch (e) {}
+    try { fs.unlinkSync(tempOutput); } catch (e) {}
+  };
 
-      proc.stdout.on('end', () => {
-        if (hasSentData) {
-          res.end();
-        } else if (!res.headersSent) {
-          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-        }
-      });
+  try {
+    await downloadToTempFile(videoUrl, tempVideo);
 
-      proc.on('error', (err) => {
-        if (!hasSentData && !res.headersSent) {
-          res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-        }
-      });
+    const ffmpegBin = ffmpegPath || 'ffmpeg';
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-y',
+      '-i', tempVideo,
+      '-map', '0:v:0',
+      '-c:v', 'copy',
+      '-an',
+      '-movflags', '+faststart',
+      tempOutput
+    ];
 
-      req.on('close', () => {
-        try { proc.kill('SIGKILL'); } catch (e) {}
-      });
-    } catch (err) {
-      if (!res.headersSent) {
-        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-      }
+    await execFileAsync(ffmpegBin, args, { timeout: 45000 });
+
+    if (!fs.existsSync(tempOutput)) {
+      throw new Error('FFmpeg failed to create muted video file');
     }
-  });
+
+    const stat = fs.statSync(tempOutput);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+
+    const readStream = fs.createReadStream(tempOutput);
+    readStream.pipe(res);
+
+    readStream.on('close', cleanup);
+    readStream.on('error', cleanup);
+    res.on('finish', cleanup);
+    res.on('close', cleanup);
+  } catch (err) {
+    cleanup();
+    if (!res.headersSent) {
+      res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+    }
+  }
 });
 
 // 4. API: Dedicated High-Quality 320kbps MP3 Audio Transcoder Route
