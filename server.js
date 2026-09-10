@@ -331,25 +331,17 @@ function parseYtdlpInfo(info, targetUrl) {
 }
 
 async function extractWithYtdlpDirect(targetUrl) {
-  const bins = [
-    path.join(__dirname, 'yt-dlp'),
-    'yt-dlp',
-    './yt-dlp'
+  const commands = [
+    { bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '10', targetUrl] },
+    { bin: 'python', args: ['-m', 'yt_dlp', '-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '10', targetUrl] },
+    { bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '10', targetUrl] },
+    { bin: 'yt-dlp', args: ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '10', targetUrl] }
   ];
 
-  for (const b of bins) {
-    if ((b.startsWith('.') || path.isAbsolute(b)) && !fs.existsSync(b)) continue;
+  for (const cmd of commands) {
+    if ((cmd.bin.startsWith('.') || path.isAbsolute(cmd.bin)) && !fs.existsSync(cmd.bin)) continue;
     try {
-      const args = [
-        '-j',
-        '--no-warnings',
-        '--no-check-certificates',
-        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        '--add-header', 'X-IG-App-ID: 936619743392459',
-        '--add-header', 'Accept-Language: en-US,en;q=0.9',
-        targetUrl
-      ];
-      const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 25000, maxBuffer: 20 * 1024 * 1024 });
+      const res = await execFileAsync(cmd.bin, cmd.args, { cwd: __dirname, timeout: 15000, maxBuffer: 50 * 1024 * 1024 });
       if (res && res.stdout) {
         const info = JSON.parse(res.stdout.trim());
         const parsed = parseYtdlpInfo(info, targetUrl);
