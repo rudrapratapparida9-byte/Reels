@@ -487,6 +487,12 @@ app.get('/api/stream', (req, res) => {
         }
 
         if (proxyRes.statusCode >= 400) {
+          // If on Render and upstream rejected direct cloud fetch, pipe through residential tunnel bridge
+          const isFromBridgeCall = req.headers['x-from-render'] === 'true';
+          if (!isFromBridgeCall) {
+            const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`;
+            return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
+          }
           if (!res.headersSent) {
             return res.status(proxyRes.statusCode).send(`Upstream CDN returned ${proxyRes.statusCode}`);
           }
@@ -524,6 +530,11 @@ app.get('/api/stream', (req, res) => {
       });
 
       request.on('error', (e) => {
+        const isFromBridgeCall = req.headers['x-from-render'] === 'true';
+        if (!isFromBridgeCall) {
+          const bridgeStreamUrl = `https://zoning-highlights-thumbnail-diary.trycloudflare.com/api/stream?url=${encodeURIComponent(cleanTarget)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`;
+          return fetchWithRedirects(bridgeStreamUrl, redirectCount + 1);
+        }
         if (!res.headersSent) {
           res.status(502).send('Proxy streaming error: ' + e.message);
         }
