@@ -5,7 +5,15 @@ import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import http from 'http';
 import https from 'https';
+import fs from 'fs';
 import ffmpegPath from 'ffmpeg-static';
+
+// Ensure ffmpeg executable has 755 execute permissions on Linux/Render
+try {
+  if (ffmpegPath && fs.existsSync(ffmpegPath)) {
+    fs.chmodSync(ffmpegPath, 0o755);
+  }
+} catch (e) {}
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -400,12 +408,6 @@ app.get('/api/merge', (req, res) => {
   const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
   const disposition = isDownload ? 'attachment' : 'inline';
 
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
-
   try {
     const ffmpegBin = ffmpegPath || 'ffmpeg';
     const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
@@ -426,12 +428,31 @@ app.get('/api/merge', (req, res) => {
     ];
 
     const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let hasSentData = false;
 
-    proc.stdout.pipe(res);
+    proc.stdout.on('data', (chunk) => {
+      if (!hasSentData) {
+        hasSentData = true;
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+      }
+      res.write(chunk);
+    });
+
+    proc.stdout.on('end', () => {
+      if (hasSentData) {
+        res.end();
+      } else if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
+      }
+    });
 
     proc.on('error', (err) => {
       console.warn('FFmpeg merge spawn failed, redirecting to raw stream:', err.message);
-      if (!res.headersSent) {
+      if (!hasSentData && !res.headersSent) {
         res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}`);
       }
     });
@@ -472,12 +493,6 @@ app.get('/api/audio', (req, res) => {
   const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
   const disposition = (isInline && !isDownload) ? 'inline' : 'attachment';
 
-  res.setHeader('Content-Type', 'audio/mpeg');
-  res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
-
   try {
     const ffmpegBin = ffmpegPath || 'ffmpeg';
     const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
@@ -494,11 +509,31 @@ app.get('/api/audio', (req, res) => {
     ];
 
     const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    proc.stdout.pipe(res);
+    let hasSentData = false;
+
+    proc.stdout.on('data', (chunk) => {
+      if (!hasSentData) {
+        hasSentData = true;
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+      }
+      res.write(chunk);
+    });
+
+    proc.stdout.on('end', () => {
+      if (hasSentData) {
+        res.end();
+      } else if (!res.headersSent) {
+        res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+      }
+    });
 
     proc.on('error', (err) => {
       console.warn('FFmpeg audio transcode failed, falling back to raw stream:', err.message);
-      if (!res.headersSent) {
+      if (!hasSentData && !res.headersSent) {
         res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
       }
     });

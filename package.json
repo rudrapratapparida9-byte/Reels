@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.js",
-    "postinstall": "pip3 install yt-dlp instaloader || pip install yt-dlp instaloader || true; curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod +x ./yt-dlp || true"
+    "postinstall": "chmod -R 755 ./node_modules/ffmpeg-static || true; pip3 install yt-dlp instaloader || pip install yt-dlp instaloader || true; curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod +x ./yt-dlp || true"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
