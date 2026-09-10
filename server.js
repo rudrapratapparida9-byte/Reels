@@ -166,6 +166,7 @@ app.get('/api/instagram', async (req, res) => {
     return res.json(cached);
   }
 
+  try {
     let result = null;
     const hostHeader = (req.headers.host || '').toLowerCase();
     const isLocalDirect = hostHeader.startsWith('localhost:5000') || hostHeader.startsWith('127.0.0.1:5000');
