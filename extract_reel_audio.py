@@ -1,6 +1,6 @@
 """
 Standalone Instagram Audio & Video Extractor
-Extracts both Video stream and dedicated Audio track (with full DASH manifest sound for licensed music)
+Optimized for ultra-fast extraction with yt-dlp & DASH audio support.
 """
 
 import sys
@@ -28,23 +28,32 @@ except Exception:
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-try:
-    import instaloader
-    L = instaloader.Instaloader(
-        download_pictures=False,
-        download_videos=False,
-        download_comments=False,
-        save_metadata=False,
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-    )
-    if hasattr(L, 'context') and hasattr(L.context, '_session'):
-        L.context._session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-            'X-IG-App-ID': '936619743392459',
-            'Accept-Language': 'en-US,en;q=0.9'
-        })
-except Exception:
-    L = None
+L = None
+
+def get_instaloader():
+    global L
+    if L is not None:
+        return L if L is not False else None
+    try:
+        import instaloader
+        inst = instaloader.Instaloader(
+            download_pictures=False,
+            download_videos=False,
+            download_comments=False,
+            save_metadata=False,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+        )
+        if hasattr(inst, 'context') and hasattr(inst.context, '_session'):
+            inst.context._session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                'X-IG-App-ID': '936619743392459',
+                'Accept-Language': 'en-US,en;q=0.9'
+            })
+        L = inst
+        return L
+    except Exception:
+        L = False
+        return None
 
 def extract_shortcode(url_or_text):
     """Extract Instagram shortcode from URL or audio URL."""
@@ -58,58 +67,6 @@ def extract_shortcode(url_or_text):
         return match.group(1)
     match2 = re.search(r'([A-Za-z0-9_-]{9,15})', url_or_text)
     return match2.group(1) if match2 else None
-
-def extract_with_cobalt(url_or_shortcode):
-    """Fallback extraction using public high-speed Cobalt scraper clusters."""
-    try:
-        if url_or_shortcode.startswith('http'):
-            target_url = url_or_shortcode
-        else:
-            target_url = f"https://www.instagram.com/reel/{url_or_shortcode}/"
-            
-        endpoints = [
-            'https://api.cobalt.tools/api/json',
-            'https://cobalt-api.kwiatekm.pl/api/json',
-            'https://co.wuk.sh/api/json',
-            'https://api.wuk.sh/api/json'
-        ]
-        headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        body = json.dumps({'url': target_url, 'vQuality': '1080', 'filenamePattern': 'basic'}).encode('utf-8')
-        
-        for ep in endpoints:
-            try:
-                req = urllib.request.Request(ep, data=body, headers=headers, method='POST')
-                with urllib.request.urlopen(req, timeout=4) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
-                    if data.get('url'):
-                        shortcode = extract_shortcode(url_or_shortcode) or 'media'
-                        return {
-                            'success': True,
-                            'id': f"insta_{shortcode}",
-                            'shortcode': shortcode,
-                            'type': 'reel',
-                            'title': f"Instagram Reel ({shortcode})",
-                            'username': '@instagram_creator',
-                            'caption': data.get('caption') or f"Instagram Reel #{shortcode}",
-                            'likes': 'Trending',
-                            'comments': 'Public',
-                            'is_video': True,
-                            'videoUrl': data['url'],
-                            'thumbnailUrl': data.get('thumbnail'),
-                            'images': [data['thumbnail']] if data.get('thumbnail') else [],
-                            'audioTitle': 'Original Audio (320kbps MP3)',
-                            'audioUrl': data['url'],
-                            'duration': 'HD 1080p'
-                        }
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None
 
 def extract_with_ytdlp(url_or_shortcode):
     """Extraction using yt-dlp to guarantee audio and video streams."""
@@ -125,16 +82,17 @@ def extract_with_ytdlp(url_or_shortcode):
     else:
         target_url = f"https://www.instagram.com/reel/{url_or_shortcode}/"
 
-    # 1. Try python module
+    # 1. Try python module directly (fastest, no subprocess overhead)
     try:
         import yt_dlp
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
+            'noplaylist': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            'socket_timeout': 6,
+            'socket_timeout': 5,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                 'X-IG-App-ID': '936619743392459',
@@ -147,7 +105,7 @@ def extract_with_ytdlp(url_or_shortcode):
     except Exception:
         info = None
 
-    # 2. Try standalone yt-dlp binary via subprocess
+    # 2. Try standalone yt-dlp binary via subprocess if module didn't return
     if not info:
         import subprocess
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -166,13 +124,14 @@ def extract_with_ytdlp(url_or_shortcode):
                     b,
                     '-j',
                     '--no-warnings',
+                    '--no-playlist',
                     '--no-check-certificates',
-                    '--socket-timeout', '6',
+                    '--socket-timeout', '5',
                     '--add-header', 'X-IG-App-ID: 936619743392459',
                     '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                     target_url
                 ]
-                out = subprocess.check_output(cmd, timeout=10, stderr=subprocess.DEVNULL)
+                out = subprocess.check_output(cmd, timeout=8, stderr=subprocess.DEVNULL)
                 if out:
                     info = json.loads(out.decode('utf-8', errors='replace').strip())
                     if info:
@@ -264,13 +223,15 @@ def get_reel_audio_and_video(url_or_shortcode):
     if not shortcode:
         return yt_data or {'success': False, 'error': 'Could not find a valid shortcode in URL'}
 
-    # 2. Secondary: Instaloader fallback (parses DASH Manifest for dedicated sound streams)
-    if L:
+    # 2. Secondary: Instaloader fallback
+    loader = get_instaloader()
+    if loader:
         try:
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
+            import instaloader
+            post = instaloader.Post.from_shortcode(loader.context, shortcode)
             raw = getattr(post, '_node', {}) or {}
             
-            # 1. Video URL from Instagram
+            # Video URL from Instagram
             video_versions = raw.get('video_versions') or []
             video_url = None
             for vv in video_versions:
@@ -284,7 +245,7 @@ def get_reel_audio_and_video(url_or_shortcode):
                 video_url = post.video_url
             is_video = bool(post.is_video or video_url)
 
-            # 2. Extract Dedicated Audio Stream from DASH Manifest XML
+            # Extract Dedicated Audio Stream from DASH Manifest XML
             manifest = raw.get('video_dash_manifest') or ''
             audio_stream_url = None
             if manifest:
@@ -301,21 +262,7 @@ def get_reel_audio_and_video(url_or_shortcode):
                 except Exception:
                     pass
 
-            # If yt_data had 1080p video, keep 1080p video and attach DASH audio stream
-            if yt_data and yt_data.get('videoUrl'):
-                video_url = yt_data['videoUrl']
-
-            # If no audio stream was found in DASH manifest, only accept if video is true progressive
-            if not audio_stream_url and (yt_data and yt_data.get('audioUrl') and yt_data['audioUrl'] != video_url):
-                audio_stream_url = yt_data['audioUrl']
-
-            if not audio_stream_url and not ('xpv_progressive' in video_url and 'dash_baseline' not in video_url):
-                # No genuine audio stream found, continue to external fallbacks
-                raise Exception("No audio stream in Instaloader DASH manifest")
-
             final_audio_url = audio_stream_url or video_url
-
-            # 3. Extract Song/Artist Metadata if available
             clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
             music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
             music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}
@@ -349,11 +296,6 @@ def get_reel_audio_and_video(url_or_shortcode):
             }
         except Exception:
             pass
-
-    # 3. Tertiary fallback via Cobalt public clusters
-    cobalt_res = extract_with_cobalt(url_or_shortcode)
-    if cobalt_res:
-        return cobalt_res
 
     return {'success': False, 'error': 'Failed to extract Instagram reel media and audio'}
 

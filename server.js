@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
@@ -24,9 +25,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// High-speed In-Memory Cache (TTL: 10 minutes)
+// Enable Gzip/Deflate compression for all responses (reduces network payload by up to 75%)
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
+  threshold: 1024
+}));
+
+// Fast In-Memory Cache (TTL: 15 minutes, up to 200 items)
 const mediaCache = new Map();
-const CACHE_TTL_MS = 10 * 60 * 1000;
+const CACHE_TTL_MS = 15 * 60 * 1000;
 
 function getCached(key) {
   const item = mediaCache.get(key);
@@ -39,31 +49,36 @@ function getCached(key) {
 }
 
 function setCached(key, data) {
-  if (mediaCache.size > 40) {
+  if (mediaCache.size > 200) {
     const oldestKey = mediaCache.keys().next().value;
     mediaCache.delete(oldestKey);
   }
   mediaCache.set(key, { data, timestamp: Date.now() });
 }
 
-// Universal CORS headers for all browser clients
+// Auto-detect working Python binary on startup
+let workingPythonBin = null;
+async function detectPythonBinary() {
+  const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  for (const bin of candidates) {
+    try {
+      await execFileAsync(bin, ['--version'], { timeout: 2000 });
+      workingPythonBin = bin;
+      console.log(`✅ Detected working Python binary: ${bin}`);
+      return;
+    } catch (e) {}
+  }
+  console.warn('⚠️ No native Python binary detected.');
+}
+detectPythonBinary().catch(() => {});
+
+// Universal CORS headers
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
-  }
-  next();
-});
-
-// Serve static frontend assets with automatic mobile/desktop cache busting
-app.use((req, res, next) => {
-  if (req.path === '/' || req.path === '/index.html') {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('Clear-Site-Data', '"cache"');
   }
   next();
 });
@@ -91,13 +106,19 @@ app.get('/sitemap.xml', (req, res) => {
   res.send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://reels-1-nvfo.onrender.com/</loc><priority>1.0</priority></url></urlset>');
 });
 
+// Serve frontend static assets with high-speed caching
 app.use(express.static(path.join(__dirname, 'dist'), {
+  etag: true,
+  lastModified: true,
+  maxAge: '1y',
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('index.html')) {
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+      res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.setHeader('Clear-Site-Data', '"cache"');
+    } else if (filePath.includes('/assets/') || filePath.includes('\\assets\\')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
     }
   }
 }));
@@ -105,7 +126,8 @@ app.use(express.static(path.join(__dirname, 'dist'), {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '5.5.0-audio-options',
+    version: '6.0.0-turbo-fast',
+    pythonBin: workingPythonBin,
     cachedEntries: mediaCache.size,
     time: new Date().toISOString()
   });
@@ -119,10 +141,10 @@ app.get('/api/clear-cache', (req, res) => {
 
 app.get('/api/debug-ytdlp', async (req, res) => {
   const targetUrl = cleanInstagramUrl(req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/');
+  const pyBin = workingPythonBin || 'python';
   const ytdlpCommands = [
     { name: './yt-dlp', bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', targetUrl] },
-    { name: 'python3 extract', bin: 'python3', args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] },
-    { name: 'python3 yt_dlp', bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', targetUrl] }
+    { name: `${pyBin} extract`, bin: pyBin, args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] }
   ];
 
   const results = [];
@@ -137,7 +159,6 @@ app.get('/api/debug-ytdlp', async (req, res) => {
         time: Date.now() - start,
         success: true,
         keys: parsed ? Object.keys(parsed) : null,
-        formats: parsed && parsed.formats ? parsed.formats.map(f => ({ id: f.format_id, acodec: f.acodec, vcodec: f.vcodec, url_prefix: f.url ? f.url.slice(0, 60) : null })) : null,
         videoUrl: parsed ? (parsed.videoUrl || parsed.url) : null,
         audioUrl: parsed ? parsed.audioUrl : null
       });
@@ -297,14 +318,12 @@ function parseYtdlpInfo(info, targetUrl) {
     } else if (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') {
       progressiveUrl = fUrl;
     } else if (isH264) {
-      // Prioritize H.264 for iPhone/iPad/Mac Safari compatibility
       h264VideoUrl = fUrl;
     } else if (isVideo && !genericVideoUrl) {
       genericVideoUrl = fUrl;
     }
   }
 
-  // Universal Video Stream: Prioritize Progressive -> H.264 -> Generic -> Direct URL
   const videoUrl = progressiveUrl || h264VideoUrl || genericVideoUrl || info.url;
   const finalAudioUrl = audioUrl || progressiveUrl || videoUrl;
   const videoOnlyUrl = h264VideoUrl || genericVideoUrl || progressiveUrl || videoUrl;
@@ -331,7 +350,7 @@ function parseYtdlpInfo(info, targetUrl) {
     videoUrl: videoUrl,
     videoWithAudioUrl: progressiveUrl || videoUrl,
     videoOnlyUrl: videoOnlyUrl,
-    hasSeparateAudio: Boolean(dashVideoUrl && audioUrl && !progressiveUrl),
+    hasSeparateAudio: Boolean(audioUrl && progressiveUrl !== audioUrl),
     thumbnailUrl: thumbnail,
     images: thumbnail ? [thumbnail] : [],
     audioTitle: audioTitle,
@@ -340,47 +359,209 @@ function parseYtdlpInfo(info, targetUrl) {
   };
 }
 
-async function extractInstagramFast(targetUrl) {
-  const commonHeaders = [
-    '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-    '--add-header', 'X-IG-App-ID: 936619743392459',
-    '--add-header', 'Accept-Language: en-US,en;q=0.9'
-  ];
+function fetchHttpBuffer(targetUrl, headers = {}, timeout = 2500) {
+  return new Promise((resolve) => {
+    try {
+      const parsed = new URL(targetUrl);
+      const client = parsed.protocol === 'https:' ? https : http;
+      const req = client.get(targetUrl, { headers, timeout }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          let loc = res.headers.location;
+          if (!loc.startsWith('http')) loc = new URL(loc, targetUrl).href;
+          return fetchHttpBuffer(loc, headers, timeout).then(resolve);
+        }
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, data }));
+      });
+      req.on('error', (e) => resolve({ status: 500, error: e.message, data: '' }));
+      req.on('timeout', () => { req.destroy(); resolve({ status: 408, error: 'Timeout', data: '' }); });
+    } catch (err) {
+      resolve({ status: 500, error: err.message, data: '' });
+    }
+  });
+}
 
-  // Worker 1: Direct Python Extractor (Fast & Ultra-Lightweight ~25MB RAM)
-  const runPythonWorker = async () => {
-    const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
-    const bins = ['python3', 'python', 'py'];
-    for (const b of bins) {
+function findMediaItemInObject(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (obj.video_versions || (obj.image_versions2 && (obj.user || obj.owner)) || obj.xdt_shortcode_media) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const res = findMediaItemInObject(item);
+      if (res) return res;
+    }
+  } else {
+    for (const key of Object.keys(obj)) {
+      const res = findMediaItemInObject(obj[key]);
+      if (res) return res;
+    }
+  }
+  return null;
+}
+
+function parseDashAudioFromManifest(manifest) {
+  if (!manifest) return null;
+  const audioRepMatch = manifest.match(/<Representation[^>]*id="[^"]*audio[^"]*"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                        manifest.match(/<AdaptationSet[^>]*mimeType="audio[^"]*"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                        manifest.match(/<BaseURL>([^<]+)<\/BaseURL>/i);
+  return audioRepMatch ? audioRepMatch[1] : null;
+}
+
+// Native Direct Node.js Extractor (< 1000ms)
+async function extractDirectNode(targetUrl) {
+  const shortcodeMatch = targetUrl.match(/(?:reel|reels|p|tv|share\/reel|share\/p|stories\/[^/]+)\/([A-Za-z0-9_-]+)/i);
+  const shortcode = shortcodeMatch ? shortcodeMatch[1] : null;
+  if (!shortcode || shortcode === 'audio') return null;
+
+  const cleanUrl = `https://www.instagram.com/reel/${shortcode}/`;
+  const res = await fetchHttpBuffer(cleanUrl, {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Sec-Fetch-Site': 'none'
+  }, 2000);
+
+  if (!res || !res.data) return null;
+
+  const html = res.data;
+  const scriptRegex = /<script\s+type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  while ((match = scriptRegex.exec(html)) !== null) {
+    const content = match[1];
+    if (content.includes('video_versions') || content.includes('image_versions2') || content.includes('xdt_shortcode_media')) {
       try {
-        const res = await execFileAsync(b, [scriptPath, targetUrl], {
-          cwd: __dirname,
-          timeout: 8000,
-          maxBuffer: 8 * 1024 * 1024,
-          env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-        });
-        if (res && res.stdout) {
-          const parsed = JSON.parse(res.stdout.trim());
-          if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
-            return parsed;
+        const parsed = JSON.parse(content);
+        const item = findMediaItemInObject(parsed);
+        if (item) {
+          const media = item.xdt_shortcode_media || item;
+          const uploader = media.user?.username || media.owner?.username || 'instagram_creator';
+          const caption = (typeof media.caption === 'string' ? media.caption : media.caption?.text) || 
+                          (media.edge_media_to_caption?.edges?.[0]?.node?.text) || '';
+          
+          let videoUrl = null;
+          let progressiveUrl = null;
+          let dashAudioUrl = null;
+
+          if (media.video_versions && media.video_versions.length > 0) {
+            const sorted = [...media.video_versions].sort((a, b) => (b.width || 0) - (a.width || 0));
+            const prog = sorted.find(v => v.url && (v.url.includes('xpv_progressive') || v.url.includes('progressive_recipe=1')));
+            progressiveUrl = prog ? prog.url : null;
+            videoUrl = progressiveUrl || sorted[0].url;
+          } else if (media.video_url) {
+            videoUrl = media.video_url;
+            progressiveUrl = media.video_url;
           }
+
+          if (media.video_dash_manifest) {
+            dashAudioUrl = parseDashAudioFromManifest(media.video_dash_manifest);
+          }
+
+          const finalAudioUrl = dashAudioUrl || progressiveUrl || videoUrl;
+
+          let thumbUrl = null;
+          if (media.image_versions2?.candidates?.length > 0) {
+            thumbUrl = media.image_versions2.candidates[0].url;
+          } else if (media.display_uri || media.display_url) {
+            thumbUrl = media.display_uri || media.display_url;
+          }
+
+          let images = [];
+          if (media.carousel_media && Array.isArray(media.carousel_media)) {
+            images = media.carousel_media.map(m => m.image_versions2?.candidates?.[0]?.url || m.display_uri || m.video_versions?.[0]?.url).filter(Boolean);
+          } else if (media.edge_sidecar_to_children?.edges) {
+            images = media.edge_sidecar_to_children.edges.map(e => e.node?.display_url || e.node?.video_url).filter(Boolean);
+          }
+          if (images.length === 0 && thumbUrl) {
+            images = [thumbUrl];
+          }
+
+          const clips = media.clips_metadata || {};
+          const musicInfo = clips.music_info?.music_asset_info || clips.original_sound_info || {};
+          const track = musicInfo.title || musicInfo.original_audio_title || 'Original Audio';
+          const artist = musicInfo.display_artist || musicInfo.ig_artist?.username || uploader;
+          const audioTitle = musicInfo.title ? `${artist} • ${track} (320kbps MP3)` : `@${uploader} • Original Audio (320kbps MP3)`;
+          const durationText = media.video_duration ? `${Math.round(media.video_duration)}s HD` : (videoUrl ? 'HD 1080p' : 'HD Lossless');
+
+          return {
+            success: true,
+            id: `insta_${shortcode}`,
+            shortcode: shortcode,
+            type: videoUrl ? 'reel' : 'photo',
+            title: `Post by @${uploader}`,
+            username: `@${uploader}`,
+            userAvatar: media.user?.profile_pic_url || media.owner?.profile_pic_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+            caption: caption,
+            likes: media.like_count ? Number(media.like_count).toLocaleString() : 'Trending',
+            comments: media.comment_count ? Number(media.comment_count).toLocaleString() : 'Public',
+            is_video: Boolean(videoUrl),
+            videoUrl: videoUrl,
+            videoWithAudioUrl: progressiveUrl || videoUrl,
+            videoOnlyUrl: videoUrl,
+            hasSeparateAudio: Boolean(dashAudioUrl && !progressiveUrl),
+            thumbnailUrl: thumbUrl,
+            images: images,
+            audioTitle: audioTitle,
+            audioUrl: finalAudioUrl,
+            duration: durationText
+          };
         }
       } catch (e) {}
     }
+  }
+  return null;
+}
+
+// Ultra-Fast Parallel Race Extractor (Executes multiple engines concurrently and returns the fastest winner)
+async function extractInstagramFast(targetUrl) {
+  const cleanUrl = cleanInstagramUrl(targetUrl);
+
+  const runDirectNode = async () => {
+    try {
+      const res = await extractDirectNode(cleanUrl);
+      if (res && res.success && (res.videoUrl || res.audioUrl || res.thumbnailUrl)) {
+        return res;
+      }
+    } catch (e) {}
     return null;
   };
 
-  // Worker 2: Standalone yt-dlp binary (Fallback)
+  const runPythonWorker = async () => {
+    const pyBin = workingPythonBin || (process.platform === 'win32' ? 'python' : 'python3');
+    const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+    try {
+      const res = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
+        cwd: __dirname,
+        timeout: 8000,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+      });
+      if (res && res.stdout) {
+        const parsed = JSON.parse(res.stdout.trim());
+        if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return null;
+  };
+
   const runYtdlpWorker = async () => {
     const ytdlpBin = path.join(__dirname, 'yt-dlp');
     const bins = fs.existsSync(ytdlpBin) ? [ytdlpBin, 'yt-dlp'] : ['yt-dlp'];
     for (const b of bins) {
       try {
-        const args = ['-j', '--no-warnings', '--no-check-certificates', '--socket-timeout', '6', ...commonHeaders, targetUrl];
+        const commonHeaders = [
+          '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          '--add-header', 'X-IG-App-ID: 936619743392459',
+          '--add-header', 'Accept-Language: en-US,en;q=0.9'
+        ];
+        const args = ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '5', ...commonHeaders, cleanUrl];
         const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 8000, maxBuffer: 10 * 1024 * 1024 });
         if (res && res.stdout) {
           const info = JSON.parse(res.stdout.trim());
-          const parsed = parseYtdlpInfo(info, targetUrl);
+          const parsed = parseYtdlpInfo(info, cleanUrl);
           if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
             return parsed;
           }
@@ -390,18 +571,30 @@ async function extractInstagramFast(targetUrl) {
     return null;
   };
 
-  // Memory-Safe Sequential Execution (Runs Python in 2s, avoids concurrent RAM spikes)
-  try {
-    const pyResult = await runPythonWorker();
-    if (pyResult && pyResult.success) return pyResult;
-  } catch (e) {}
+  return new Promise((resolve) => {
+    let resolved = false;
+    let finishedCount = 0;
+    const workers = [runDirectNode(), runPythonWorker(), runYtdlpWorker()];
+    const total = workers.length;
 
-  try {
-    const ytResult = await runYtdlpWorker();
-    if (ytResult && ytResult.success) return ytResult;
-  } catch (e) {}
-
-  return null;
+    workers.forEach((p) => {
+      p.then((res) => {
+        if (!resolved && res && res.success && (res.videoUrl || res.audioUrl || res.thumbnailUrl)) {
+          resolved = true;
+          return resolve(res);
+        }
+        finishedCount++;
+        if (finishedCount === total && !resolved) {
+          resolve(null);
+        }
+      }).catch(() => {
+        finishedCount++;
+        if (finishedCount === total && !resolved) {
+          resolve(null);
+        }
+      });
+    });
+  });
 }
 
 // 1. API: Instagram Media Extraction
@@ -413,7 +606,7 @@ app.get('/api/instagram', async (req, res) => {
 
   const targetUrl = cleanInstagramUrl(rawTargetUrl);
   
-  // Check memory cache first
+  // Check memory cache first (< 1ms instant response)
   const cached = getCached(targetUrl);
   if (cached) {
     return res.json(cached);
@@ -423,8 +616,6 @@ app.get('/api/instagram', async (req, res) => {
     const result = await extractInstagramFast(targetUrl);
 
     if (!result || !result.success) {
-      return res.status(400).json({ success: false, error: (result && result.error) || 'Unable to extract Instagram media. Please make sure the link is from a public post.' });
-    }
       return res.status(400).json({ success: false, error: (result && result.error) || 'Unable to extract Instagram media. Please make sure the link is from a public post.' });
     }
 
@@ -471,11 +662,11 @@ app.get('/api/instagram', async (req, res) => {
     }
     const rawThumb = extractRawUrl(result.thumbnailUrl);
 
-    // If separate audio stream exists and differs from the video URL, ALWAYS merge with FFmpeg to guarantee sound
-    const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
+    // Only merge with FFmpeg if video stream is strictly video-only without integrated audio
+    const isVideoOnlyStream = Boolean(result.hasSeparateAudio && rawAudio && rawVideo && rawAudio !== rawVideo);
 
     const proxiedVideoWithAudioUrl = rawVideo 
-      ? (hasSeparateAudio
+      ? (isVideoOnlyStream
           ? `/api/merge?videoUrl=${encodeURIComponent(rawVideo)}&audioUrl=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_with_audio.mp4`)}&inline=true`
           : `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_with_audio.mp4`)}&inline=true`)
       : null;
@@ -595,7 +786,7 @@ function downloadToTempFile(targetUrl, destPath) {
   });
 }
 
-// 2. API: Merged Video + Audio Stream Route (Guaranteed 100% Sound via Local Muxing)
+// 2. API: Merged Video + Audio Stream Route
 app.get('/api/merge', async (req, res) => {
   let rawVideo = req.query.videoUrl;
   let rawAudio = req.query.audioUrl;
@@ -633,7 +824,6 @@ app.get('/api/merge', async (req, res) => {
   const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
   const disposition = isDownload ? 'attachment' : 'inline';
 
-  // If no separate audio is provided or audio matches video, proxy the video directly
   if (!audioUrl || audioUrl === videoUrl) {
     return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
   }
@@ -651,7 +841,6 @@ app.get('/api/merge', async (req, res) => {
   };
 
   try {
-    // Concurrently download both video and audio streams via Node HTTPS client
     await Promise.all([
       downloadToTempFile(videoUrl, tempVideo),
       downloadToTempFile(audioUrl, tempAudio)
@@ -705,7 +894,7 @@ app.get('/api/merge', async (req, res) => {
   }
 });
 
-// 3. API: Muted Video Route (Guaranteed 100% Silent via FFmpeg -an)
+// 3. API: Muted Video Route
 app.get('/api/mute', async (req, res) => {
   let rawVideo = req.query.url || req.query.videoUrl;
   if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
@@ -720,7 +909,6 @@ app.get('/api/mute', async (req, res) => {
     return res.status(400).send('Missing video URL parameter');
   }
 
-  // Unwrap nested proxy URLs if passed
   if (videoUrl.includes('/api/stream?url=') || videoUrl.includes('/api/mute?url=')) {
     try {
       const parsed = new URL(videoUrl, `http://localhost:${PORT}`);
@@ -805,7 +993,6 @@ app.get('/api/audio', (req, res) => {
       return res.status(400).send('Missing audio stream URL');
     }
 
-    // Unwrap if nested stream URL
     if (audioUrl.startsWith('/api/stream') || audioUrl.startsWith('/api/audio')) {
       try {
         const parsed = new URL(audioUrl, `http://localhost:${PORT}`);
@@ -872,7 +1059,7 @@ app.get('/api/audio', (req, res) => {
   });
 });
 
-// 4. API: Media Stream & Proxy Route
+// 5. API: Media Stream & Proxy Route
 app.get('/api/stream', (req, res) => {
   proxyThroughBridge(req, res, () => {
     let rawStreamUrl = req.query.url;
@@ -892,7 +1079,6 @@ app.get('/api/stream', (req, res) => {
       return res.status(400).send('Missing media stream URL.');
     }
 
-    // If a relative or nested /api/stream was passed, unwrap it
     if (streamUrl.startsWith('/api/stream')) {
       try {
         const parsed = new URL(streamUrl, `http://localhost:${PORT}`);
@@ -903,113 +1089,110 @@ app.get('/api/stream', (req, res) => {
       }
     }
 
-    // Normalize URL encoding (fix double-encoded & and = from CDN signatures)
     if (streamUrl.includes('%26') || streamUrl.includes('%3D')) {
       streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
     }
 
-  const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
-    if (redirectCount > 5) {
-      if (!res.headersSent) res.status(500).send('Too many redirects');
-      return;
-    }
-
-    try {
-      let cleanTarget = targetUrl;
-      if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
-        cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
+    const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
+      if (redirectCount > 5) {
+        if (!res.headersSent) res.status(500).send('Too many redirects');
+        return;
       }
 
-      const targetObj = new URL(cleanTarget);
-      const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
-
-      const client = targetObj.protocol === 'https:' ? https : http;
-      const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept': '*/*'
-      };
-
-      if (isMetaDomain) {
-        headers['Referer'] = 'https://www.instagram.com/';
-        headers['Origin'] = 'https://www.instagram.com';
-      }
-
-      if (req.headers.range) {
-        headers['Range'] = req.headers.range;
-      }
-
-      const request = client.get(cleanTarget, { headers, timeout: 30000 }, (proxyRes) => {
-        if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-          const nextUrl = new URL(proxyRes.headers.location, cleanTarget).toString();
-          return fetchWithRedirects(nextUrl, redirectCount + 1);
+      try {
+        let cleanTarget = targetUrl;
+        if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
+          cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
         }
 
-        if (proxyRes.statusCode >= 400) {
-          if (!res.headersSent) {
-            return res.status(proxyRes.statusCode).send(`Upstream CDN returned ${proxyRes.statusCode}`);
+        const targetObj = new URL(cleanTarget);
+        const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
+
+        const client = targetObj.protocol === 'https:' ? https : http;
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          'Accept': '*/*'
+        };
+
+        if (isMetaDomain) {
+          headers['Referer'] = 'https://www.instagram.com/';
+          headers['Origin'] = 'https://www.instagram.com';
+        }
+
+        if (req.headers.range) {
+          headers['Range'] = req.headers.range;
+        }
+
+        const request = client.get(cleanTarget, { headers, timeout: 30000 }, (proxyRes) => {
+          if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+            const nextUrl = new URL(proxyRes.headers.location, cleanTarget).toString();
+            return fetchWithRedirects(nextUrl, redirectCount + 1);
           }
-          return;
-        }
 
-        if (res.headersSent) return;
+          if (proxyRes.statusCode >= 400) {
+            if (!res.headersSent) {
+              return res.status(proxyRes.statusCode).send(`Upstream CDN returned ${proxyRes.statusCode}`);
+            }
+            return;
+          }
 
-        res.statusCode = proxyRes.statusCode || 200;
-        res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : (proxyRes.headers['content-type'] || defaultContentType));
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+          if (res.headersSent) return;
 
-        if (proxyRes.headers['content-range']) {
-          res.setHeader('Content-Range', proxyRes.headers['content-range']);
-        }
-        if (proxyRes.headers['content-length']) {
-          res.setHeader('Content-Length', proxyRes.headers['content-length']);
-        }
-        if (proxyRes.headers['accept-ranges']) {
-          res.setHeader('Accept-Ranges', proxyRes.headers['accept-ranges']);
-        } else {
-          res.setHeader('Accept-Ranges', 'bytes');
-        }
+          res.statusCode = proxyRes.statusCode || 200;
+          res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : (proxyRes.headers['content-type'] || defaultContentType));
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
 
-        const safeFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_');
-        if (isInline && !isDownload) {
-          res.setHeader('Content-Disposition', 'inline');
-        } else {
-          res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
-        }
+          if (proxyRes.headers['content-range']) {
+            res.setHeader('Content-Range', proxyRes.headers['content-range']);
+          }
+          if (proxyRes.headers['content-length']) {
+            res.setHeader('Content-Length', proxyRes.headers['content-length']);
+          }
+          if (proxyRes.headers['accept-ranges']) {
+            res.setHeader('Accept-Ranges', proxyRes.headers['accept-ranges']);
+          } else {
+            res.setHeader('Accept-Ranges', 'bytes');
+          }
 
-        proxyRes.pipe(res);
-      });
+          const safeFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_');
+          if (isInline && !isDownload) {
+            res.setHeader('Content-Disposition', 'inline');
+          } else {
+            res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
+          }
 
-      request.on('error', (e) => {
+          proxyRes.pipe(res);
+        });
+
+        request.on('error', (e) => {
+          if (!res.headersSent) {
+            res.status(502).send('Proxy streaming error: ' + e.message);
+          }
+        });
+
+        request.on('timeout', () => {
+          request.destroy();
+          if (!res.headersSent) {
+            res.status(504).send('Proxy streaming timeout');
+          }
+        });
+      } catch (e) {
         if (!res.headersSent) {
-          res.status(502).send('Proxy streaming error: ' + e.message);
+          res.status(500).send('Proxy error: ' + e.message);
         }
-      });
-
-      request.on('timeout', () => {
-        request.destroy();
-        if (!res.headersSent) {
-          res.status(504).send('Proxy streaming timeout');
-        }
-      });
-    } catch (e) {
-      if (!res.headersSent) {
-        res.status(500).send('Proxy error: ' + e.message);
       }
-    }
-  };
+    };
 
     fetchWithRedirects(streamUrl);
   });
 });
 
-// Single Page Application Fallback Middleware (Express 5 safe)
+// Single Page Application Fallback Middleware
 app.use((req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+  res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.setHeader('Clear-Site-Data', '"cache"');
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
