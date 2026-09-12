@@ -1,58 +1,18 @@
-// ReelsVault - 100% Reliable Universal Downloader for Mobile (Android/iOS) and Desktop
-// Provides Multi-Strategy Blob + Proxy Attachment + Direct Stream download pipeline
+// ReelsVault - 100% Reliable Universal Downloader for Mobile (iOS / Android), Mac, Windows & Linux
 
 /**
- * Trigger download via synthetic anchor click
+ * Detect client platform capabilities
  */
-export function triggerDirectAnchor(url, filename, newTab = false) {
-  const link = document.createElement('a');
-  link.href = url;
-  if (filename) {
-    link.setAttribute('download', filename);
-  }
-  if (newTab) {
-    link.setAttribute('target', '_blank');
-    link.setAttribute('rel', 'noopener noreferrer');
-  }
-  link.style.display = 'none';
-  document.body.appendChild(link);
-
-  try {
-    link.click();
-  } catch (e) {
-    const evt = new MouseEvent('click', {
-      view: window,
-      bubbles: true,
-      cancelable: true
-    });
-    link.dispatchEvent(evt);
-  }
-
-  setTimeout(() => {
-    try {
-      document.body.removeChild(link);
-    } catch (e) {}
-  }, 2000);
-}
-
-/**
- * Trigger download via hidden iframe (prevents page redirect / tab opening)
- */
-export function triggerHiddenIframeDownload(url) {
-  try {
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = url;
-    document.body.appendChild(iframe);
-    setTimeout(() => {
-      try {
-        document.body.removeChild(iframe);
-      } catch (e) {}
-    }, 60000);
-    return true;
-  } catch (e) {
-    return false;
-  }
+export function getClientEnvironment() {
+  if (typeof navigator === 'undefined') return { isIOS: false, isSafari: false, isMac: false, isAndroid: false };
+  
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+  const isMac = /Macintosh|MacIntel|MacPPC|Mac68K/.test(navigator.platform || '');
+  const isAndroid = /Android/.test(ua);
+  
+  return { isIOS, isSafari, isMac, isAndroid };
 }
 
 /**
@@ -61,16 +21,18 @@ export function triggerHiddenIframeDownload(url) {
 export function buildDownloadProxyUrl(mediaUrl, filename) {
   if (!mediaUrl) return '';
 
+  const safeFilename = (filename || 'instagram_media.mp4').replace(/[/\\?%*:|"<>]/g, '_');
+
   // If already an /api/merge URL, preserve video + audio merging
   if (mediaUrl.includes('/api/merge')) {
     try {
       const parsed = new URL(mediaUrl, window.location.origin);
-      parsed.searchParams.set('filename', filename);
+      parsed.searchParams.set('filename', safeFilename);
       parsed.searchParams.set('download', '1');
       parsed.searchParams.set('inline', 'false');
       return parsed.pathname + parsed.search;
     } catch (e) {
-      return `${mediaUrl}&download=1&filename=${encodeURIComponent(filename)}`;
+      return `${mediaUrl}&download=1&filename=${encodeURIComponent(safeFilename)}`;
     }
   }
 
@@ -78,12 +40,12 @@ export function buildDownloadProxyUrl(mediaUrl, filename) {
   if (mediaUrl.includes('/api/audio')) {
     try {
       const parsed = new URL(mediaUrl, window.location.origin);
-      parsed.searchParams.set('filename', filename);
+      parsed.searchParams.set('filename', safeFilename);
       parsed.searchParams.set('download', '1');
       parsed.searchParams.set('inline', 'false');
       return parsed.pathname + parsed.search;
     } catch (e) {
-      return `${mediaUrl}&download=1&filename=${encodeURIComponent(filename)}`;
+      return `${mediaUrl}&download=1&filename=${encodeURIComponent(safeFilename)}`;
     }
   }
 
@@ -91,12 +53,12 @@ export function buildDownloadProxyUrl(mediaUrl, filename) {
   if (mediaUrl.includes('/api/mute')) {
     try {
       const parsed = new URL(mediaUrl, window.location.origin);
-      parsed.searchParams.set('filename', filename);
+      parsed.searchParams.set('filename', safeFilename);
       parsed.searchParams.set('download', '1');
       parsed.searchParams.set('inline', 'false');
       return parsed.pathname + parsed.search;
     } catch (e) {
-      return `${mediaUrl}&download=1&filename=${encodeURIComponent(filename)}`;
+      return `${mediaUrl}&download=1&filename=${encodeURIComponent(safeFilename)}`;
     }
   }
 
@@ -108,7 +70,6 @@ export function buildDownloadProxyUrl(mediaUrl, filename) {
       const parsed = new URL(mediaUrl, window.location.origin);
       rawUrl = parsed.searchParams.get('url') || mediaUrl;
     } catch (e) {
-      // String parsing fallback
       const match = mediaUrl.match(/[?&]url=([^&]+)/);
       if (match) {
         rawUrl = decodeURIComponent(match[1]);
@@ -117,14 +78,12 @@ export function buildDownloadProxyUrl(mediaUrl, filename) {
   }
 
   // Return clean proxy URL with attachment & filename headers
-  return `/api/stream?url=${encodeURIComponent(rawUrl)}&filename=${encodeURIComponent(filename)}&download=1`;
+  return `/api/stream?url=${encodeURIComponent(rawUrl)}&filename=${encodeURIComponent(safeFilename)}&download=1`;
 }
 
 /**
  * Universal Downloader for Instagram Reels (MP4), Photos (JPG), Covers, and Audio (MP3)
- * @param {string} mediaUrl - The media URL (raw or /api/stream)
- * @param {string} filename - The desired download filename
- * @returns {Promise<boolean>}
+ * Specially optimized for iOS Safari (iPhone/iPad), macOS Safari, Windows, Linux, and Android.
  */
 export async function downloadMediaFile(mediaUrl, filename = 'instagram_media.mp4') {
   if (!mediaUrl) {
@@ -133,54 +92,41 @@ export async function downloadMediaFile(mediaUrl, filename = 'instagram_media.mp
 
   const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
   const proxyDownloadUrl = buildDownloadProxyUrl(mediaUrl, safeFilename);
+  const { isIOS } = getClientEnvironment();
 
-  // STRATEGY 1: Fetch as Blob and trigger Object URL download
-  // This is the cleanest HTML5 method: forces exact filename, avoids popups/new tabs, works on Mobile & Desktop
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
-
-    // Try fetching via the attachment proxy first, then raw URL
-    const fetchUrl = proxyDownloadUrl;
-    const res = await fetch(fetchUrl, {
-      method: 'GET',
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const blob = await res.blob();
-      if (blob && blob.size > 100) {
-        const blobUrl = window.URL.createObjectURL(blob);
-        triggerDirectAnchor(blobUrl, safeFilename, false);
-        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 30000);
-        return true;
-      }
-    }
-  } catch (blobErr) {
-    console.warn("Blob fetch download strategy encountered issue, trying direct stream...", blobErr);
-  }
-
-  // STRATEGY 2: Hidden iframe / direct anchor attachment download
-  try {
-    triggerDirectAnchor(proxyDownloadUrl, safeFilename, false);
-    return true;
-  } catch (anchorErr) {
-    console.warn("Direct anchor failed:", anchorErr);
-  }
-
-  // STRATEGY 3: Hidden iframe attachment
-  try {
-    triggerHiddenIframeDownload(proxyDownloadUrl);
-    return true;
-  } catch (iframeErr) {}
-
-  // STRATEGY 4: Final fallback - open in new window
-  try {
-    window.open(proxyDownloadUrl, '_blank');
-    return true;
-  } catch (winErr) {
+  // 1. iOS (iPhone / iPad) Safari Optimization:
+  // Direct location navigation triggers iOS native "Do you want to download 'filename'?" system prompt
+  if (isIOS) {
     window.location.href = proxyDownloadUrl;
+    return true;
+  }
+
+  // 2. Desktop (Mac, Windows, Linux) and Android: Direct HTML5 Download Anchor
+  try {
+    const link = document.createElement('a');
+    link.href = proxyDownloadUrl;
+    link.setAttribute('download', safeFilename);
+    link.setAttribute('target', '_self');
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    
+    setTimeout(() => {
+      try {
+        document.body.removeChild(link);
+      } catch (e) {}
+    }, 1000);
+    return true;
+  } catch (e) {
+    console.warn("Direct anchor download error, falling back to window navigation:", e);
+  }
+
+  // 3. Fallback: Window location navigation
+  try {
+    window.location.href = proxyDownloadUrl;
+    return true;
+  } catch (err) {
+    window.open(proxyDownloadUrl, '_blank');
     return true;
   }
 }

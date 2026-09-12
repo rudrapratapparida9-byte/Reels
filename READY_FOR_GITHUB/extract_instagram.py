@@ -22,6 +22,12 @@ try:
         compress_json=False,
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     )
+    if hasattr(L, 'context') and hasattr(L.context, '_session'):
+        L.context._session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'X-IG-App-ID': '936619743392459',
+            'Accept-Language': 'en-US,en;q=0.9'
+        })
 except Exception:
     L = None
 
@@ -171,6 +177,38 @@ def extract_via_instaloader(shortcode, forced_type=None, story_username=None):
         item_type = forced_type if forced_type else ('reel' if is_video else 'photo')
         owner = story_username or post.owner_username or 'instagram_creator'
 
+        # Extract audio stream from DASH manifest XML if present (for licensed music / separate audio streams)
+        raw = getattr(post, '_node', {}) or {}
+        manifest = raw.get('video_dash_manifest') or ''
+        extracted_audio_url = None
+        if manifest:
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(manifest)
+                for period in root.findall('{urn:mpeg:dash:schema:mpd:2011}Period'):
+                    for adapt in period.findall('{urn:mpeg:dash:schema:mpd:2011}AdaptationSet'):
+                        mime = adapt.get('mimeType') or adapt.get('contentType') or ''
+                        if 'audio' in mime.lower():
+                            for rep in adapt.findall('{urn:mpeg:dash:schema:mpd:2011}Representation'):
+                                base = rep.find('{urn:mpeg:dash:schema:mpd:2011}BaseURL')
+                                if base is not None and base.text:
+                                    extracted_audio_url = base.text.strip()
+                                    break
+            except Exception:
+                pass
+
+        # Music metadata title
+        clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
+        music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
+        music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}
+        if music_meta and music_meta.get('title'):
+            artist = music_meta.get('display_artist') or owner
+            audio_title = f"{artist} • {music_meta.get('title')} (320kbps MP3)"
+        else:
+            audio_title = f"@{owner} • Original Audio (320kbps MP3)"
+
+        audio_url_final = extracted_audio_url or (post.video_url if is_video else None)
+
         return {
             'success': True,
             'id': f"insta_{shortcode}",
@@ -185,83 +223,162 @@ def extract_via_instaloader(shortcode, forced_type=None, story_username=None):
             'videoUrl': post.video_url if is_video else None,
             'thumbnailUrl': post.url,
             'images': images if images else [post.url],
-            'audioTitle': f"@{owner} • Original Audio (320kbps MP3)",
-            'audioUrl': post.video_url if is_video else None,
+            'audioTitle': audio_title,
+            'audioUrl': audio_url_final,
             'duration': duration_text
         }
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
 def extract_via_ytdlp(target_url, shortcode=None, forced_type=None, story_username=None):
-    """Extract media using yt-dlp across multiple platform binaries."""
+    """Extract media using yt-dlp with direct module call and subprocess fallback."""
     if not target_url:
         return {'success': False, 'error': 'No target URL provided'}
 
-    binaries = [
-        ["python", "-m", "yt_dlp"],
-        ["python3", "-m", "yt_dlp"],
-        ["yt-dlp"]
-    ]
+    info = None
 
-    for bin_cmd in binaries:
-        try:
-            cmd = bin_cmd + ["-j", "--no-warnings", "--socket-timeout", "5", target_url]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
-            if res.returncode == 0 and res.stdout.strip():
-                info = json.loads(res.stdout)
+    # 1. In-process direct module (fastest)
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'noplaylist': True,
+            'extract_flat': False,
+            'nocheckcertificate': True,
+            'socket_timeout': 5,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                'X-IG-App-ID': '936619743392459',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Sec-Fetch-Site': 'same-origin'
+            }
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(target_url, download=False)
+    except Exception:
+        info = None
 
-                # Username extraction
-                username = story_username
-                if not username:
-                    if info.get('channel'):
-                        username = f"@{info['channel'].replace('@', '')}"
-                    elif info.get('uploader'):
-                        username = f"@{info['uploader'].replace('@', '')}"
-                    elif info.get('uploader_id'):
-                        username = f"@{info['uploader_id'].replace('@', '')}"
-                    else:
-                        username = '@instagram_creator'
+    # 2. Subprocess fallback
+    if not info:
+        binaries = [
+            ["python", "-m", "yt_dlp"],
+            ["python3", "-m", "yt_dlp"],
+            ["yt-dlp"]
+        ]
+        for bin_cmd in binaries:
+            try:
+                cmd = bin_cmd + ["-j", "--no-warnings", "--socket-timeout", "5", target_url]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
+                if res.returncode == 0 and res.stdout.strip():
+                    info = json.loads(res.stdout)
+                    if info:
+                        break
+            except Exception:
+                continue
 
-                # Direct audio stream search
-                direct_audio = None
-                if info.get('formats') and isinstance(info['formats'], list):
-                    for f in info['formats']:
-                        if (f.get('vcodec') == 'none' or not f.get('vcodec')) and f.get('acodec') and f.get('url'):
-                            direct_audio = f['url']
-                            break
-                if not direct_audio:
-                    direct_audio = info.get('url')
+    if not info:
+        return {'success': False, 'error': 'yt-dlp extraction did not return valid metadata'}
 
-                is_video = bool(
-                    info.get('ext') == 'mp4' or 
-                    (info.get('vcodec') and info.get('vcodec') != 'none') or 
-                    (info.get('url') and '.mp4' in info.get('url', ''))
-                )
-                item_type = forced_type if forced_type else ('reel' if is_video else 'photo')
-                effective_sc = shortcode or info.get('id') or 'media'
+    # Username extraction
+    username = story_username
+    if not username:
+        if info.get('channel'):
+            username = f"@{info['channel'].replace('@', '')}"
+        elif info.get('uploader'):
+            username = f"@{info['uploader'].replace('@', '')}"
+        elif info.get('uploader_id'):
+            username = f"@{info['uploader_id'].replace('@', '')}"
+        else:
+            username = '@instagram_creator'
 
-                return {
-                    'success': True,
-                    'id': f"insta_{effective_sc}",
-                    'shortcode': effective_sc,
-                    'type': item_type,
-                    'title': info.get('title') or (f"{'Story' if item_type == 'story' else 'Post'} by {username}"),
-                    'username': username,
-                    'caption': info.get('description') or info.get('title') or '',
-                    'likes': f"{(info.get('like_count', 0) / 1000):.1f}K" if info.get('like_count') else "Trending",
-                    'comments': str(info.get('comment_count')) if info.get('comment_count') else "Public",
-                    'is_video': is_video,
-                    'videoUrl': info.get('url') if is_video else None,
-                    'thumbnailUrl': info.get('thumbnail') or info.get('url'),
-                    'images': [info.get('thumbnail')] if info.get('thumbnail') else ([info.get('url')] if info.get('url') else []),
-                    'audioTitle': f"{username} • Original Audio (320kbps MP3)",
-                    'audioUrl': direct_audio if is_video else None,
-                    'duration': f"{round(info.get('duration', 0))}s HD" if info.get('duration') else "HD 1080p"
-                }
-        except Exception:
+    formats = info.get('formats') or []
+    audio_url = None
+    progressive_url = None
+    dash_video_url = None
+    h264_video_url = None
+    generic_video_url = None
+
+    for f in formats:
+        fid = str(f.get('format_id', '')).lower()
+        vcodec = str(f.get('vcodec', '') or '').lower()
+        acodec = str(f.get('acodec', '') or '').lower()
+        f_url = str(f.get('url', ''))
+        if not f_url:
             continue
 
-    return {'success': False, 'error': 'yt-dlp extraction did not return valid metadata'}
+        is_audio_only = (fid.endswith('a') or 'audio' in fid or (acodec and acodec != 'none')) and (not vcodec or vcodec == 'none')
+        is_progressive = (
+            (vcodec and vcodec != 'none' and acodec and acodec != 'none') or
+            fid.isdigit() or
+            'xpv_progressive' in f_url or
+            'progressive_recipe=1' in f_url
+        )
+        is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264')
+        is_dash_video = fid.endswith('v') or (vcodec and vcodec != 'none' and (not acodec or acodec == 'none'))
+        is_video_format = (vcodec and vcodec != 'none') or fid.endswith('v') or is_h264
+
+        if is_audio_only:
+            if not audio_url:
+                audio_url = f_url
+        elif is_progressive:
+            if not progressive_url:
+                progressive_url = f_url
+        elif is_dash_video:
+            if not dash_video_url:
+                dash_video_url = f_url
+        elif is_h264:
+            if not h264_video_url:
+                h264_video_url = f_url
+        elif is_video_format and not generic_video_url:
+            generic_video_url = f_url
+
+    video_url = progressive_url or info.get('url') or h264_video_url or dash_video_url or generic_video_url
+    final_audio_url = audio_url or progressive_url or video_url
+    video_only_url = dash_video_url or h264_video_url or generic_video_url or progressive_url or video_url
+    has_separate_audio = bool(not progressive_url and (dash_video_url or h264_video_url) and audio_url)
+
+    is_video = bool(
+        progressive_url or 
+        dash_video_url or 
+        info.get('ext') == 'mp4' or 
+        (info.get('vcodec') and info.get('vcodec') != 'none') or 
+        (info.get('url') and '.mp4' in info.get('url', ''))
+    )
+    item_type = forced_type if forced_type else ('reel' if is_video else 'photo')
+    effective_sc = shortcode or info.get('id') or 'media'
+
+    uploader = username or info.get('uploader') or 'instagram_creator'
+    track = info.get('track') or info.get('title')
+    artist = info.get('artist') or uploader
+
+    if info.get('track'):
+        audio_title = f"{artist} • {track} (320kbps MP3)"
+    else:
+        audio_title = f"{uploader} • Original Audio (320kbps MP3)"
+
+    return {
+        'success': True,
+        'id': f"insta_{effective_sc}",
+        'shortcode': effective_sc,
+        'type': item_type,
+        'title': info.get('title') or (f"{'Story' if item_type == 'story' else 'Post'} by {username}"),
+        'username': username,
+        'caption': info.get('description') or info.get('title') or '',
+        'likes': f"{(info.get('like_count', 0) / 1000):.1f}K" if info.get('like_count') else "Trending",
+        'comments': str(info.get('comment_count')) if info.get('comment_count') else "Public",
+        'is_video': is_video,
+        'videoUrl': video_url if is_video else None,
+        'videoWithAudioUrl': progressive_url or video_url if is_video else None,
+        'videoOnlyUrl': video_only_url if is_video else None,
+        'hasSeparateAudio': has_separate_audio,
+        'thumbnailUrl': info.get('thumbnail') or info.get('url'),
+        'images': [info.get('thumbnail')] if info.get('thumbnail') else ([info.get('url')] if info.get('url') else []),
+        'audioTitle': audio_title,
+        'audioUrl': final_audio_url if is_video else None,
+        'duration': f"{round(info.get('duration', 0))}s HD" if info.get('duration') else "HD 1080p"
+    }
 
 def generate_shortcode_candidates(sc):
     """Auto-heal font/OCR ambiguities like lowercase 'l' vs uppercase 'I' vs '1'."""
@@ -285,33 +402,25 @@ def generate_shortcode_candidates(sc):
         candidates.append(sc.replace('0', 'o'))
     return list(dict.fromkeys(candidates))
 
-def main():
-    if len(sys.argv) < 2:
-        print(json.dumps({'success': False, 'error': 'No URL provided'}))
-        return
-
-    raw_input = sys.argv[1].strip()
+def extract_instagram_data(raw_input):
     clean_url, shortcode, tag, story_username, audio_id = parse_link_info(raw_input)
 
     if not clean_url and not shortcode:
-        print(json.dumps({
+        return {
             'success': False,
             'error': 'Invalid Instagram link. Please paste a valid Reel, Post, Story, or Audio link.'
-        }))
-        return
+        }
 
     # CASE 1: Story with numeric story ID -> converted to shortcode
     if tag == 'story' and shortcode:
         res_story = extract_via_instaloader(shortcode, forced_type='story', story_username=story_username)
         if res_story.get('success'):
-            print(json.dumps(res_story, ensure_ascii=False))
-            return
+            return res_story
         
         # Fallback to yt-dlp on post URL of that story shortcode
         res_yt_story = extract_via_ytdlp(f"https://www.instagram.com/p/{shortcode}/", shortcode, forced_type='story', story_username=story_username)
         if res_yt_story.get('success'):
-            print(json.dumps(res_yt_story, ensure_ascii=False))
-            return
+            return res_yt_story
 
     # CASE 2: Story username only (e.g. /stories/username/)
     if tag == 'story_user' and story_username:
@@ -319,74 +428,53 @@ def main():
         canonical_user_url = f"https://www.instagram.com/{clean_user}/"
         res_user = extract_via_ytdlp(canonical_user_url, clean_user, forced_type='story', story_username=clean_user)
         if res_user.get('success'):
-            print(json.dumps(res_user, ensure_ascii=False))
-            return
+            return res_user
         
-        print(json.dumps({
+        return {
             'success': False,
             'error': f'To download @{clean_user}\'s story, open Instagram, tap Share on that specific story and click "Copy Link".'
-        }))
-        return
+        }
 
     # CASE 3: Standard Post / Reel / Carousel / Audio (with candidate auto-healing)
     if shortcode:
         candidate_shortcodes = generate_shortcode_candidates(shortcode)
         for cand_sc in candidate_shortcodes:
-            # 1. Primary: Instaloader
+            # 1. Primary: yt-dlp on reel or post canonical URL
+            target_ep = 'reel' if tag != 'photo' else 'p'
+            res_yt = extract_via_ytdlp(f"https://www.instagram.com/{target_ep}/{cand_sc}/", cand_sc, forced_type=tag)
+            if res_yt.get('success'):
+                return res_yt
+
+            # 2. Secondary: yt-dlp on alternative endpoint
+            alt_ep = 'p' if target_ep == 'reel' else 'reel'
+            res_yt2 = extract_via_ytdlp(f"https://www.instagram.com/{alt_ep}/{cand_sc}/", cand_sc, forced_type=tag)
+            if res_yt2.get('success'):
+                return res_yt2
+
+            # 3. Tertiary: Instaloader fallback
             res_instaloader = extract_via_instaloader(cand_sc, forced_type=tag)
             if res_instaloader.get('success'):
-                print(json.dumps(res_instaloader, ensure_ascii=False))
-                return
+                return res_instaloader
 
-            # 2. Secondary: yt-dlp on reel canonical URL
-            res_yt = extract_via_ytdlp(f"https://www.instagram.com/reel/{cand_sc}/", cand_sc, forced_type=tag)
-            if res_yt.get('success'):
-                print(json.dumps(res_yt, ensure_ascii=False))
-                return
+    # CASE 4: Direct URL fallback with yt-dlp
+    if clean_url:
+        res_direct = extract_via_ytdlp(clean_url, shortcode or "media", forced_type=tag)
+        if res_direct.get('success'):
+            return res_direct
 
-            # 3. Tertiary: yt-dlp on post canonical /p/
-            res_yt2 = extract_via_ytdlp(f"https://www.instagram.com/p/{cand_sc}/", cand_sc, forced_type=tag)
-            if res_yt2.get('success'):
-                print(json.dumps(res_yt2, ensure_ascii=False))
-                return
+    return {
+        'success': False,
+        'error': 'Unable to parse Instagram link. Please ensure the link is a public Reel, Post, Story, or Audio.'
+    }
 
-    # CASE 5: Guaranteed Success Fallback Payload (Ensures 100% of links work and play smoothly)
-    if shortcode or clean_url:
-        eff_sc = shortcode or 'media'
-        tag_label = 'Story' if tag == 'story' else 'Audio' if tag == 'audio' else 'Photo' if tag == 'photo' else 'Reel'
-        owner = story_username or 'instagram_creator'
-        
-        # High quality playable media stream fallback so audio/video players never show 0:00
-        playable_media = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
-        playable_audio = "https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3"
-        thumb = "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1080&auto=format&fit=crop&q=80"
-
-        fallback_payload = {
-            'success': True,
-            'id': f"insta_{eff_sc}",
-            'shortcode': eff_sc,
-            'type': tag or 'reel',
-            'title': f"Instagram {tag_label} by @{owner}",
-            'username': f"@{owner}",
-            'caption': f"Save this {tag_label.lower()} in 1080p Full HD without watermark. Tap the download buttons below to save video, audio MP3, or high-res cover.",
-            'likes': 'Trending',
-            'comments': 'Public',
-            'is_video': tag != 'photo' and tag != 'audio',
-            'videoUrl': playable_media if tag != 'photo' and tag != 'audio' else None,
-            'thumbnailUrl': thumb,
-            'images': [thumb],
-            'audioTitle': f"@{owner} • Original Audio (320kbps MP3)",
-            'audioUrl': playable_audio,
-            'duration': '0:35 HD' if tag == 'audio' else 'HD 1080p'
-        }
-        print(json.dumps(fallback_payload, ensure_ascii=False))
+def main():
+    if len(sys.argv) < 2:
+        print(json.dumps({'success': False, 'error': 'No URL provided'}))
         return
 
-    print(json.dumps({
-        'success': False,
-        'error': 'Unable to parse Instagram link. Please ensure the post, story, or reel is public and try again.'
-    }))
+    raw_input = sys.argv[1].strip()
+    result = extract_instagram_data(raw_input)
+    print(json.dumps(result, ensure_ascii=False))
 
 if __name__ == '__main__':
     main()
-

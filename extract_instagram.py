@@ -231,91 +231,154 @@ def extract_via_instaloader(shortcode, forced_type=None, story_username=None):
         return {'success': False, 'error': str(e)}
 
 def extract_via_ytdlp(target_url, shortcode=None, forced_type=None, story_username=None):
-    """Extract media using yt-dlp across multiple platform binaries."""
+    """Extract media using yt-dlp with direct module call and subprocess fallback."""
     if not target_url:
         return {'success': False, 'error': 'No target URL provided'}
 
-    binaries = [
-        ["python", "-m", "yt_dlp"],
-        ["python3", "-m", "yt_dlp"],
-        ["yt-dlp"]
-    ]
+    info = None
 
-    for bin_cmd in binaries:
-        try:
-            cmd = bin_cmd + ["-j", "--no-warnings", "--socket-timeout", "5", target_url]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
-            if res.returncode == 0 and res.stdout.strip():
-                info = json.loads(res.stdout)
+    # 1. In-process direct module (fastest)
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'noplaylist': True,
+            'extract_flat': False,
+            'nocheckcertificate': True,
+            'socket_timeout': 5,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                'X-IG-App-ID': '936619743392459',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Sec-Fetch-Site': 'same-origin'
+            }
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(target_url, download=False)
+    except Exception:
+        info = None
 
-                # Username extraction
-                username = story_username
-                if not username:
-                    if info.get('channel'):
-                        username = f"@{info['channel'].replace('@', '')}"
-                    elif info.get('uploader'):
-                        username = f"@{info['uploader'].replace('@', '')}"
-                    elif info.get('uploader_id'):
-                        username = f"@{info['uploader_id'].replace('@', '')}"
-                    else:
-                        username = '@instagram_creator'
+    # 2. Subprocess fallback
+    if not info:
+        binaries = [
+            ["python", "-m", "yt_dlp"],
+            ["python3", "-m", "yt_dlp"],
+            ["yt-dlp"]
+        ]
+        for bin_cmd in binaries:
+            try:
+                cmd = bin_cmd + ["-j", "--no-warnings", "--socket-timeout", "5", target_url]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
+                if res.returncode == 0 and res.stdout.strip():
+                    info = json.loads(res.stdout)
+                    if info:
+                        break
+            except Exception:
+                continue
 
-                # Direct audio stream search
-                direct_audio = None
-                if info.get('formats') and isinstance(info['formats'], list):
-                    for f in info['formats']:
-                        acodec = f.get('acodec')
-                        vcodec = f.get('vcodec')
-                        if acodec and acodec != 'none' and (not vcodec or vcodec == 'none' or 'a' in str(f.get('format_id', ''))):
-                            direct_audio = f.get('url')
-                            break
-                    if not direct_audio:
-                        for f in info['formats']:
-                            if f.get('acodec') and f.get('acodec') != 'none':
-                                direct_audio = f.get('url')
-                                break
-                if not direct_audio:
-                    direct_audio = info.get('url')
+    if not info:
+        return {'success': False, 'error': 'yt-dlp extraction did not return valid metadata'}
 
-                is_video = bool(
-                    info.get('ext') == 'mp4' or 
-                    (info.get('vcodec') and info.get('vcodec') != 'none') or 
-                    (info.get('url') and '.mp4' in info.get('url', ''))
-                )
-                item_type = forced_type if forced_type else ('reel' if is_video else 'photo')
-                effective_sc = shortcode or info.get('id') or 'media'
+    # Username extraction
+    username = story_username
+    if not username:
+        if info.get('channel'):
+            username = f"@{info['channel'].replace('@', '')}"
+        elif info.get('uploader'):
+            username = f"@{info['uploader'].replace('@', '')}"
+        elif info.get('uploader_id'):
+            username = f"@{info['uploader_id'].replace('@', '')}"
+        else:
+            username = '@instagram_creator'
 
-                uploader = username or info.get('uploader') or 'instagram_creator'
-                track = info.get('track') or info.get('title')
-                artist = info.get('artist') or uploader
+    formats = info.get('formats') or []
+    audio_url = None
+    progressive_url = None
+    dash_video_url = None
+    h264_video_url = None
+    generic_video_url = None
 
-                if info.get('track'):
-                    audio_title = f"{artist} • {track} (320kbps MP3)"
-                else:
-                    audio_title = f"{uploader} • Original Audio (320kbps MP3)"
-
-                return {
-                    'success': True,
-                    'id': f"insta_{effective_sc}",
-                    'shortcode': effective_sc,
-                    'type': item_type,
-                    'title': info.get('title') or (f"{'Story' if item_type == 'story' else 'Post'} by {username}"),
-                    'username': username,
-                    'caption': info.get('description') or info.get('title') or '',
-                    'likes': f"{(info.get('like_count', 0) / 1000):.1f}K" if info.get('like_count') else "Trending",
-                    'comments': str(info.get('comment_count')) if info.get('comment_count') else "Public",
-                    'is_video': is_video,
-                    'videoUrl': info.get('url') if is_video else None,
-                    'thumbnailUrl': info.get('thumbnail') or info.get('url'),
-                    'images': [info.get('thumbnail')] if info.get('thumbnail') else ([info.get('url')] if info.get('url') else []),
-                    'audioTitle': audio_title,
-                    'audioUrl': direct_audio if is_video else None,
-                    'duration': f"{round(info.get('duration', 0))}s HD" if info.get('duration') else "HD 1080p"
-                }
-        except Exception:
+    for f in formats:
+        fid = str(f.get('format_id', '')).lower()
+        vcodec = str(f.get('vcodec', '') or '').lower()
+        acodec = str(f.get('acodec', '') or '').lower()
+        f_url = str(f.get('url', ''))
+        if not f_url:
             continue
 
-    return {'success': False, 'error': 'yt-dlp extraction did not return valid metadata'}
+        is_audio_only = (fid.endswith('a') or 'audio' in fid or (acodec and acodec != 'none')) and (not vcodec or vcodec == 'none')
+        is_progressive = (
+            (vcodec and vcodec != 'none' and acodec and acodec != 'none') or
+            fid.isdigit() or
+            'xpv_progressive' in f_url or
+            'progressive_recipe=1' in f_url
+        )
+        is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264')
+        is_dash_video = fid.endswith('v') or (vcodec and vcodec != 'none' and (not acodec or acodec == 'none'))
+        is_video_format = (vcodec and vcodec != 'none') or fid.endswith('v') or is_h264
+
+        if is_audio_only:
+            if not audio_url:
+                audio_url = f_url
+        elif is_progressive:
+            if not progressive_url:
+                progressive_url = f_url
+        elif is_dash_video:
+            if not dash_video_url:
+                dash_video_url = f_url
+        elif is_h264:
+            if not h264_video_url:
+                h264_video_url = f_url
+        elif is_video_format and not generic_video_url:
+            generic_video_url = f_url
+
+    video_url = progressive_url or info.get('url') or h264_video_url or dash_video_url or generic_video_url
+    final_audio_url = audio_url or progressive_url or video_url
+    video_only_url = dash_video_url or h264_video_url or generic_video_url or progressive_url or video_url
+    has_separate_audio = bool(not progressive_url and (dash_video_url or h264_video_url) and audio_url)
+
+    is_video = bool(
+        progressive_url or 
+        dash_video_url or 
+        info.get('ext') == 'mp4' or 
+        (info.get('vcodec') and info.get('vcodec') != 'none') or 
+        (info.get('url') and '.mp4' in info.get('url', ''))
+    )
+    item_type = forced_type if forced_type else ('reel' if is_video else 'photo')
+    effective_sc = shortcode or info.get('id') or 'media'
+
+    uploader = username or info.get('uploader') or 'instagram_creator'
+    track = info.get('track') or info.get('title')
+    artist = info.get('artist') or uploader
+
+    if info.get('track'):
+        audio_title = f"{artist} • {track} (320kbps MP3)"
+    else:
+        audio_title = f"{uploader} • Original Audio (320kbps MP3)"
+
+    return {
+        'success': True,
+        'id': f"insta_{effective_sc}",
+        'shortcode': effective_sc,
+        'type': item_type,
+        'title': info.get('title') or (f"{'Story' if item_type == 'story' else 'Post'} by {username}"),
+        'username': username,
+        'caption': info.get('description') or info.get('title') or '',
+        'likes': f"{(info.get('like_count', 0) / 1000):.1f}K" if info.get('like_count') else "Trending",
+        'comments': str(info.get('comment_count')) if info.get('comment_count') else "Public",
+        'is_video': is_video,
+        'videoUrl': video_url if is_video else None,
+        'videoWithAudioUrl': progressive_url or video_url if is_video else None,
+        'videoOnlyUrl': video_only_url if is_video else None,
+        'hasSeparateAudio': has_separate_audio,
+        'thumbnailUrl': info.get('thumbnail') or info.get('url'),
+        'images': [info.get('thumbnail')] if info.get('thumbnail') else ([info.get('url')] if info.get('url') else []),
+        'audioTitle': audio_title,
+        'audioUrl': final_audio_url if is_video else None,
+        'duration': f"{round(info.get('duration', 0))}s HD" if info.get('duration') else "HD 1080p"
+    }
 
 def generate_shortcode_candidates(sc):
     """Auto-heal font/OCR ambiguities like lowercase 'l' vs uppercase 'I' vs '1'."""
@@ -376,20 +439,22 @@ def extract_instagram_data(raw_input):
     if shortcode:
         candidate_shortcodes = generate_shortcode_candidates(shortcode)
         for cand_sc in candidate_shortcodes:
-            # 1. Primary: Instaloader
-            res_instaloader = extract_via_instaloader(cand_sc, forced_type=tag)
-            if res_instaloader.get('success'):
-                return res_instaloader
-
-            # 2. Secondary: yt-dlp on reel canonical URL
-            res_yt = extract_via_ytdlp(f"https://www.instagram.com/reel/{cand_sc}/", cand_sc, forced_type=tag)
+            # 1. Primary: yt-dlp on reel or post canonical URL
+            target_ep = 'reel' if tag != 'photo' else 'p'
+            res_yt = extract_via_ytdlp(f"https://www.instagram.com/{target_ep}/{cand_sc}/", cand_sc, forced_type=tag)
             if res_yt.get('success'):
                 return res_yt
 
-            # 3. Tertiary: yt-dlp on post canonical /p/
-            res_yt2 = extract_via_ytdlp(f"https://www.instagram.com/p/{cand_sc}/", cand_sc, forced_type=tag)
+            # 2. Secondary: yt-dlp on alternative endpoint
+            alt_ep = 'p' if target_ep == 'reel' else 'reel'
+            res_yt2 = extract_via_ytdlp(f"https://www.instagram.com/{alt_ep}/{cand_sc}/", cand_sc, forced_type=tag)
             if res_yt2.get('success'):
                 return res_yt2
+
+            # 3. Tertiary: Instaloader fallback
+            res_instaloader = extract_via_instaloader(cand_sc, forced_type=tag)
+            if res_instaloader.get('success'):
+                return res_instaloader
 
     # CASE 4: Direct URL fallback with yt-dlp
     if clean_url:

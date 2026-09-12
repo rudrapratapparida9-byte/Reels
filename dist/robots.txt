@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /api/
 
-Sitemap: https://reelsvault.com/sitemap.xml
+Sitemap: https://reels-1-nvfo.onrender.com/sitemap.xml

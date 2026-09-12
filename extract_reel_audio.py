@@ -145,6 +145,7 @@ def extract_with_ytdlp(url_or_shortcode):
     formats = info.get('formats', [])
     audio_url = None
     h264_video_url = None
+    dash_video_url = None
     generic_video_url = None
     progressive_url = None
 
@@ -156,23 +157,36 @@ def extract_with_ytdlp(url_or_shortcode):
         if not f_url:
             continue
 
-        is_audio_only = fid.endswith('a') or 'audio' in fid or acodec.startswith('mp4a') or acodec.startswith('aac') or (acodec and acodec != 'none' and (vcodec == 'none' or not vcodec))
-        is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264') or fid in ['0', '1', '2']
+        is_audio_only = (fid.endswith('a') or 'audio' in fid or (acodec and acodec != 'none')) and (not vcodec or vcodec == 'none')
+        is_progressive = (
+            (vcodec and vcodec != 'none' and acodec and acodec != 'none') or
+            fid.isdigit() or
+            'xpv_progressive' in f_url or
+            'progressive_recipe=1' in f_url
+        )
+        is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264')
+        is_dash_video = fid.endswith('v') or (vcodec and vcodec != 'none' and (not acodec or acodec == 'none'))
         is_video = (vcodec and vcodec != 'none') or fid.endswith('v') or is_h264
 
         if is_audio_only:
             if not audio_url:
                 audio_url = f_url
-        elif vcodec and vcodec != 'none' and acodec and acodec != 'none':
-            progressive_url = f_url
+        elif is_progressive:
+            if not progressive_url:
+                progressive_url = f_url
+        elif is_dash_video:
+            if not dash_video_url:
+                dash_video_url = f_url
         elif is_h264:
-            h264_video_url = f_url
+            if not h264_video_url:
+                h264_video_url = f_url
         elif is_video and not generic_video_url:
             generic_video_url = f_url
 
-    video_url = progressive_url or h264_video_url or generic_video_url or info.get('url')
+    video_url = progressive_url or info.get('url') or h264_video_url or dash_video_url or generic_video_url
     final_audio_url = audio_url or progressive_url or video_url
-    video_only_url = h264_video_url or generic_video_url or progressive_url or video_url
+    video_only_url = dash_video_url or h264_video_url or generic_video_url or progressive_url or video_url
+    has_separate_audio = bool(not progressive_url and (dash_video_url or h264_video_url) and audio_url)
 
     shortcode = extract_shortcode(url_or_shortcode) or info.get('id', 'media')
     uploader = info.get('uploader') or info.get('uploader_id') or 'instagram_creator'
@@ -202,7 +216,7 @@ def extract_with_ytdlp(url_or_shortcode):
         'videoUrl': video_url or audio_url,
         'videoWithAudioUrl': progressive_url or video_url,
         'videoOnlyUrl': video_only_url or video_url,
-        'hasSeparateAudio': bool(h264_video_url and audio_url and not progressive_url),
+        'hasSeparateAudio': has_separate_audio,
         'thumbnailUrl': thumbnail,
         'images': [thumbnail] if thumbnail else [],
         'audioTitle': audio_title,
@@ -234,15 +248,19 @@ def get_reel_audio_and_video(url_or_shortcode):
             # Video URL from Instagram
             video_versions = raw.get('video_versions') or []
             video_url = None
+            progressive_url = None
             for vv in video_versions:
                 v_u = vv.get('url')
                 if v_u and ('xpv_progressive' in v_u or 'progressive_recipe=1' in v_u):
+                    progressive_url = v_u
                     video_url = v_u
                     break
             if not video_url and video_versions:
                 video_url = video_versions[0].get('url')
+                progressive_url = video_url
             if not video_url:
                 video_url = post.video_url
+                progressive_url = video_url
             is_video = bool(post.is_video or video_url)
 
             # Extract Dedicated Audio Stream from DASH Manifest XML
@@ -263,6 +281,7 @@ def get_reel_audio_and_video(url_or_shortcode):
                     pass
 
             final_audio_url = audio_stream_url or video_url
+            has_sep_audio = bool(not progressive_url and is_video and audio_stream_url)
             clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
             music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
             music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}
@@ -288,6 +307,9 @@ def get_reel_audio_and_video(url_or_shortcode):
                 'comments': f"{post.comments:,}" if post.comments else "Public",
                 'is_video': is_video,
                 'videoUrl': video_url,
+                'videoWithAudioUrl': progressive_url or video_url,
+                'videoOnlyUrl': video_url,
+                'hasSeparateAudio': has_sep_audio,
                 'thumbnailUrl': post.url,
                 'images': [post.url] if post.url else [],
                 'audioTitle': audio_title,

@@ -81,10 +81,9 @@ export default function InstagramDownloader({
     } else {
       audioPreviewRef.current.play().then(() => {
         setIsPlayingAudio(true);
-      }).catch(() => {
-        // Fallback if browser autoplay/stream failed
-        audioPreviewRef.current.src = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
-        audioPreviewRef.current.play().then(() => setIsPlayingAudio(true)).catch(() => {});
+      }).catch((e) => {
+        console.warn("Audio playback error:", e);
+        setIsPlayingAudio(false);
       });
     }
   };
@@ -103,11 +102,23 @@ export default function InstagramDownloader({
   };
 
   const handleFetch = async (urlToFetch) => {
-    const targetUrl = (urlToFetch || urlInput).trim();
-    if (!targetUrl) {
+    let rawTarget = (urlToFetch || urlInput).trim();
+    if (!rawTarget) {
       setErrorMsg("Please paste a valid Instagram link.");
       inputRef.current?.focus();
       return;
+    }
+
+    // Auto-extract and sanitize valid Instagram URL even if concatenated or messy text was pasted
+    const urlMatch = rawTarget.match(/https?:\/\/(?:www\.)?(?:instagram\.com|instagr\.am|ig\.me)\/[^\s<>"']+/i) || 
+                     rawTarget.match(/https?:\/\/[^\s<>"']+/i) || 
+                     rawTarget.match(/(?:www\.)?(?:instagram\.com|instagr\.am|ig\.me)[^\s<>"']+/i);
+                     
+    let targetUrl = urlMatch ? (urlMatch[0].startsWith('http') ? urlMatch[0] : `https://${urlMatch[0]}`) : rawTarget;
+    
+    // Automatically sanitize the input field text for the user
+    if (targetUrl !== rawTarget && targetUrl.includes('instagram.com')) {
+      setUrlInput(targetUrl);
     }
 
     // Basic URL structure check
@@ -491,7 +502,7 @@ export default function InstagramDownloader({
                       
                       <audio
                         ref={audioPreviewRef}
-                        src={mediaData.audioUrl || mediaData.videoUrl || 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3'}
+                        src={mediaData.audioUrl || mediaData.videoUrl || ''}
                         preload="auto"
                         onTimeUpdate={(e) => setAudioCurrentTime(e.target.currentTime)}
                         onLoadedMetadata={(e) => {
@@ -503,11 +514,9 @@ export default function InstagramDownloader({
                           setIsPlayingAudio(false);
                           setAudioCurrentTime(0);
                         }}
-                        onError={() => {
-                          if (audioPreviewRef.current && !audioPreviewRef.current.src.includes('viper.mp3')) {
-                            audioPreviewRef.current.src = 'https://raw.githubusercontent.com/mdn/webaudio-examples/main/audio-analyser/viper.mp3';
-                            audioPreviewRef.current.load();
-                          }
+                        onError={(e) => {
+                          console.warn("Audio preview playback issue:", e);
+                          setIsPlayingAudio(false);
                         }}
                       />
 

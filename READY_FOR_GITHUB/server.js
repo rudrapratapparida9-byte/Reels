@@ -274,13 +274,21 @@ function parseYtdlpInfo(info, targetUrl) {
     const vcodec = String(f.vcodec || '').toLowerCase();
     const acodec = String(f.acodec || '').toLowerCase();
     const fUrl = String(f.url || '');
+    if (!fUrl) continue;
 
-    if (fid.endsWith('a') || fid.includes('audio') || acodec.startsWith('mp4a') || acodec.startsWith('aac') || (acodec && acodec !== 'none' && (vcodec === 'none' || !vcodec))) {
-      if (fUrl) audioUrl = fUrl;
-    } else if (fid.endsWith('v') || (vcodec && vcodec !== 'none' && (acodec === 'none' || !acodec))) {
-      if (fUrl) dashVideoUrl = fUrl;
-    } else if (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') {
-      if (fUrl) progressiveUrl = fUrl;
+    const isAudioOnly = (fid.endsWith('a') || fid.includes('audio') || (acodec && acodec !== 'none')) && (!vcodec || vcodec === 'none');
+    const isProgressive = (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') ||
+                          /^\d+$/.test(fid) ||
+                          fUrl.includes('xpv_progressive') ||
+                          fUrl.includes('progressive_recipe=1');
+    const isDashVideo = fid.endsWith('v') || (vcodec && vcodec !== 'none' && (!acodec || acodec === 'none'));
+
+    if (isAudioOnly) {
+      if (!audioUrl) audioUrl = fUrl;
+    } else if (isProgressive) {
+      if (!progressiveUrl) progressiveUrl = fUrl;
+    } else if (isDashVideo) {
+      if (!dashVideoUrl) dashVideoUrl = fUrl;
     }
   }
 
@@ -815,52 +823,103 @@ app.get('/api/audio', (req, res) => {
     const disposition = (isInline && !isDownload) ? 'inline' : 'attachment';
 
     try {
-      const ffmpegBin = ffmpegPath || 'ffmpeg';
-      const headersStr = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\nReferer: https://www.instagram.com/\r\n';
+      const parsedAudioUrl = new URL(audioUrl);
+      const client = parsedAudioUrl.protocol === 'https:' ? https : http;
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Referer': 'https://www.instagram.com/',
+        'Origin': 'https://www.instagram.com',
+        'Accept': '*/*'
+      };
 
-      const args = [
-        '-hide_banner',
-        '-loglevel', 'error',
-        '-headers', headersStr,
-        '-i', audioUrl,
-        '-c:a', 'libmp3lame',
-        '-b:a', '320k',
-        '-f', 'mp3',
-        'pipe:1'
-      ];
-
-      const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let hasSentData = false;
-
-      proc.stdout.on('data', (chunk) => {
-        if (!hasSentData) {
-          hasSentData = true;
-          res.setHeader('Content-Type', 'audio/mpeg');
-          res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+      const upstreamReq = client.get(audioUrl, { headers, timeout: 35000 }, (upstreamRes) => {
+        if (upstreamRes.statusCode >= 300 && upstreamRes.statusCode < 400 && upstreamRes.headers.location) {
+          let redirected = upstreamRes.headers.location;
+          if (!redirected.startsWith('http')) redirected = new URL(redirected, audioUrl).href;
+          return res.redirect(`/api/audio?url=${encodeURIComponent(redirected)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
         }
-        res.write(chunk);
+
+        if (upstreamRes.statusCode >= 400) {
+          if (!res.headersSent) {
+            return res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+          }
+          return;
+        }
+
+        const args = [
+          '-hide_banner',
+          '-loglevel', 'error',
+          '-i', 'pipe:0',
+          '-vn',
+          '-c:a', 'libmp3lame',
+          '-b:a', '320k',
+          '-f', 'mp3',
+          'pipe:1'
+        ];
+
+        let proc = null;
+        try {
+          proc = spawn(ffmpegBin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+          if (proc.stdin) {
+            proc.stdin.on('error', () => {});
+          }
+          if (proc.stderr) {
+            proc.stderr.on('data', () => {});
+          }
+        } catch (spawnErr) {
+          console.warn('FFmpeg spawn failed, falling back to raw stream:', spawnErr.message);
+          return res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+        }
+
+        let hasSentData = false;
+
+        proc.stdout.on('data', (chunk) => {
+          if (!hasSentData) {
+            hasSentData = true;
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+            res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+            res.setHeader('Accept-Ranges', 'bytes');
+          }
+          res.write(chunk);
+        });
+
+        proc.stdout.on('end', () => {
+          if (hasSentData) {
+            res.end();
+          } else if (!res.headersSent) {
+            res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+          }
+        });
+
+        proc.on('error', (err) => {
+          console.warn('FFmpeg transcode error, falling back to raw stream:', err.message);
+          if (!hasSentData && !res.headersSent) {
+            res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+          }
+        });
+
+        upstreamRes.pipe(proc.stdin);
+
+        upstreamRes.on('error', (err) => {
+          try { proc.kill('SIGKILL'); } catch (e) {}
+          if (!hasSentData && !res.headersSent) {
+            res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+          }
+        });
+
+        req.on('close', () => {
+          try { proc.kill('SIGKILL'); } catch (e) {}
+          try { upstreamReq.destroy(); } catch (e) {}
+        });
       });
 
-      proc.stdout.on('end', () => {
-        if (hasSentData) {
-          res.end();
-        } else if (!res.headersSent) {
+      upstreamReq.on('error', (err) => {
+        if (!res.headersSent) {
           res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
         }
-      });
-
-      proc.on('error', (err) => {
-        console.warn('FFmpeg audio transcode failed, falling back to raw stream:', err.message);
-        if (!hasSentData && !res.headersSent) {
-          res.redirect(`/api/stream?url=${encodeURIComponent(audioUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
-        }
-      });
-
-      req.on('close', () => {
-        try { proc.kill('SIGKILL'); } catch (e) {}
       });
     } catch (err) {
       if (!res.headersSent) {
@@ -884,7 +943,7 @@ app.get('/api/stream', (req, res) => {
 
     const isAudio = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a') || filename.toLowerCase().endsWith('.aac');
     const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg') || filename.toLowerCase().endsWith('.png');
-    const defaultContentType = isAudio ? 'audio/mpeg' : isJpg ? 'image/jpeg' : 'video/mp4';
+    const defaultContentType = isAudio ? 'audio/mp4' : isJpg ? 'image/jpeg' : 'video/mp4';
 
     if (!streamUrl) {
       return res.status(400).send('Missing media stream URL.');
@@ -906,102 +965,104 @@ app.get('/api/stream', (req, res) => {
       streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
     }
 
-  const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
-    if (redirectCount > 5) {
-      if (!res.headersSent) res.status(500).send('Too many redirects');
-      return;
-    }
-
-    try {
-      let cleanTarget = targetUrl;
-      if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
-        cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
+    const fetchWithRedirects = (targetUrl, redirectCount = 0) => {
+      if (redirectCount > 5) {
+        if (!res.headersSent) res.status(500).send('Too many redirects');
+        return;
       }
 
-      const targetObj = new URL(cleanTarget);
-      const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
-
-      const client = targetObj.protocol === 'https:' ? https : http;
-      const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept': '*/*'
-      };
-
-      if (isMetaDomain) {
-        headers['Referer'] = 'https://www.instagram.com/';
-        headers['Origin'] = 'https://www.instagram.com';
-      }
-
-      if (req.headers.range) {
-        headers['Range'] = req.headers.range;
-      }
-
-      const request = client.get(cleanTarget, { headers, timeout: 30000 }, (proxyRes) => {
-        if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-          const nextUrl = new URL(proxyRes.headers.location, cleanTarget).toString();
-          return fetchWithRedirects(nextUrl, redirectCount + 1);
+      try {
+        let cleanTarget = targetUrl;
+        if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
+          cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
         }
 
-        if (proxyRes.statusCode >= 400) {
-          if (!res.headersSent) {
-            return res.status(proxyRes.statusCode).send(`Upstream CDN returned ${proxyRes.statusCode}`);
+        const targetObj = new URL(cleanTarget);
+        const isMetaDomain = targetObj.hostname.includes('fbcdn.net') || targetObj.hostname.includes('cdninstagram.com') || targetObj.hostname.includes('instagram.com');
+
+        const client = targetObj.protocol === 'https:' ? https : http;
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          'Accept': '*/*'
+        };
+
+        if (isMetaDomain) {
+          headers['Referer'] = 'https://www.instagram.com/';
+          headers['Origin'] = 'https://www.instagram.com';
+        }
+
+        if (req.headers.range) {
+          headers['Range'] = req.headers.range;
+        }
+
+        const request = client.get(cleanTarget, { headers, timeout: 30000 }, (proxyRes) => {
+          if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+            let nextUrl = proxyRes.headers.location;
+            if (!nextUrl.startsWith('http')) nextUrl = new URL(nextUrl, cleanTarget).href;
+            return fetchWithRedirects(nextUrl, redirectCount + 1);
           }
-          return;
-        }
 
-        if (res.headersSent) return;
+          if (proxyRes.statusCode >= 400) {
+            if (!res.headersSent) {
+              return res.status(proxyRes.statusCode).send(`Upstream CDN returned ${proxyRes.statusCode}`);
+            }
+            return;
+          }
 
-        res.statusCode = proxyRes.statusCode || 200;
-        res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : (proxyRes.headers['content-type'] || defaultContentType));
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
+          if (res.headersSent) return;
 
-        if (proxyRes.headers['content-range']) {
-          res.setHeader('Content-Range', proxyRes.headers['content-range']);
-        }
-        if (proxyRes.headers['content-length']) {
-          res.setHeader('Content-Length', proxyRes.headers['content-length']);
-        }
-        if (proxyRes.headers['accept-ranges']) {
-          res.setHeader('Accept-Ranges', proxyRes.headers['accept-ranges']);
-        } else {
-          res.setHeader('Accept-Ranges', 'bytes');
-        }
+          res.statusCode = proxyRes.statusCode || 200;
+          const upstreamContentType = proxyRes.headers['content-type'];
+          const finalContentType = isAudio ? (upstreamContentType || 'audio/mp4') : (upstreamContentType || defaultContentType);
+          res.setHeader('Content-Type', finalContentType);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
 
-        const safeFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_');
-        if (isInline && !isDownload) {
-          res.setHeader('Content-Disposition', 'inline');
-        } else {
-          res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
-        }
+          if (proxyRes.headers['content-range']) {
+            res.setHeader('Content-Range', proxyRes.headers['content-range']);
+          }
+          if (proxyRes.headers['content-length']) {
+            res.setHeader('Content-Length', proxyRes.headers['content-length']);
+          }
+          if (proxyRes.headers['accept-ranges']) {
+            res.setHeader('Accept-Ranges', proxyRes.headers['accept-ranges']);
+          } else {
+            res.setHeader('Accept-Ranges', 'bytes');
+          }
 
-        proxyRes.pipe(res);
-      });
+          const safeFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_');
+          if (isInline && !isDownload) {
+            res.setHeader('Content-Disposition', 'inline');
+          } else {
+            res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
+          }
 
-      request.on('error', (e) => {
+          proxyRes.pipe(res);
+        });
+
+        request.on('error', (e) => {
+          if (!res.headersSent) {
+            res.status(502).send('Proxy streaming error: ' + e.message);
+          }
+        });
+
+        request.on('timeout', () => {
+          request.destroy();
+          if (!res.headersSent) {
+            res.status(504).send('Streaming timeout from Instagram CDN.');
+          }
+        });
+      } catch (err) {
         if (!res.headersSent) {
-          res.status(502).send('Proxy streaming error: ' + e.message);
+          res.status(500).send('Streaming error: ' + err.message);
         }
-      });
-
-      request.on('timeout', () => {
-        request.destroy();
-        if (!res.headersSent) {
-          res.status(504).send('Proxy streaming timeout');
-        }
-      });
-    } catch (e) {
-      if (!res.headersSent) {
-        res.status(500).send('Proxy error: ' + e.message);
       }
-    }
-  };
+    };
 
     fetchWithRedirects(streamUrl);
   });
 });
-
 // Single Page Application Fallback Middleware (Express 5 safe)
 app.use((req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
