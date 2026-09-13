@@ -147,9 +147,9 @@ app.get('/api/clear-cache', (req, res) => {
 
 app.get('/api/debug-ytdlp', async (req, res) => {
   const targetUrl = cleanInstagramUrl(req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/');
-  const pyBin = workingPythonBin || 'python';
+  const pyBin = workingPythonBin || 'python3';
   const ytdlpCommands = [
-    { name: './yt-dlp', bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', '--socket-timeout', '15', '--add-header', 'X-IG-App-ID: 936619743392459', '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', targetUrl] },
+    { name: './yt-dlp', bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', '--extractor-args', 'instagram:app_id=936619743392459', '--add-header', 'X-IG-App-ID: 936619743392459', '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', targetUrl] },
     { name: `${pyBin} extract`, bin: pyBin, args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] }
   ];
 
@@ -169,7 +169,7 @@ app.get('/api/debug-ytdlp', async (req, res) => {
         audioUrl: parsed ? parsed.audioUrl : null
       });
     } catch (err) {
-      results.push({ name: cmd.name, success: false, error: err.message });
+      results.push({ name: cmd.name, success: false, error: err.message, stderr: err.stderr });
     }
   }
 
