@@ -68,6 +68,23 @@ def extract_shortcode(url_or_text):
     match2 = re.search(r'([A-Za-z0-9_-]{9,15})', url_or_text)
     return match2.group(1) if match2 else None
 
+def safe_json_loads(out_str):
+    if not out_str:
+        return None
+    s = str(out_str).strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    start = s.find('{')
+    end = s.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(s[start:end+1])
+        except Exception:
+            pass
+    return None
+
 def extract_with_ytdlp(url_or_shortcode):
     """Extraction using yt-dlp to guarantee audio and video streams."""
     info = None
@@ -93,13 +110,7 @@ def extract_with_ytdlp(url_or_shortcode):
             'extract_flat': False,
             'nocheckcertificate': True,
             'socket_timeout': 15,
-            'extractor_args': {'instagram': {'app_id': ['936619743392459']}},
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                'X-IG-App-ID': '936619743392459',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Sec-Fetch-Site': 'same-origin'
-            }
+            'extractor_args': {'instagram': {'app_id': ['936619743392459']}}
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(target_url, download=False)
@@ -135,7 +146,7 @@ def extract_with_ytdlp(url_or_shortcode):
                 ]
                 out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
                 if out:
-                    info = json.loads(out.decode('utf-8', errors='replace').strip())
+                    info = safe_json_loads(out.decode('utf-8', errors='replace'))
                     if info:
                         break
             except Exception:
