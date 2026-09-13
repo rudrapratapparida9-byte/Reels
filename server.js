@@ -470,17 +470,29 @@ async function extractDirectNode(targetUrl) {
   if (!shortcode || shortcode === 'audio') return null;
 
   const cleanUrl = `https://www.instagram.com/reel/${shortcode}/`;
-  const res = await fetchHttpBuffer(cleanUrl, {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'X-IG-App-ID': '936619743392459',
-    'Sec-Fetch-Site': 'none'
-  }, 8000);
+  let html = '';
+  try {
+    const response = await fetch(cleanUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+        'X-IG-App-ID': '936619743392459'
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) return null;
+    html = await response.text();
+  } catch (e) {
+    return null;
+  }
 
-  if (!res || !res.data) return null;
-
-  const html = res.data;
+  if (!html) return null;
   const scriptRegex = /<script\s+type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi;
   let match;
   let candidateResult = null;
