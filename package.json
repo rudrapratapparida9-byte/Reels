@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "python3 -m pip install -r requirements.txt --break-system-packages || pip3 install -r requirements.txt || pip install -r requirements.txt || true; curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod 755 ./yt-dlp || true; chmod -R 755 ./node_modules/ffmpeg-static || true; vite build",
     "preview": "vite preview",
     "start": "node --max-old-space-size=300 server.js",
-    "postinstall": "pip install -r requirements.txt || pip3 install -r requirements.txt || true; curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod 755 ./yt-dlp || true; chmod -R 755 ./node_modules/ffmpeg-static || true"
+    "postinstall": "python3 -m pip install -r requirements.txt --break-system-packages || pip3 install -r requirements.txt || pip install -r requirements.txt || true; curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod 755 ./yt-dlp || true; chmod -R 755 ./node_modules/ffmpeg-static || true"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
