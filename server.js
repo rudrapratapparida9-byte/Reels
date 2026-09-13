@@ -817,66 +817,33 @@ app.get('/api/instagram', async (req, res) => {
   }
 });
 
-function downloadToTempFile(targetUrl, destPath) {
-  return new Promise((resolve, reject) => {
-    let cleanTarget = targetUrl;
-    if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
-      cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
+async function downloadToTempFile(targetUrl, destPath) {
+  let cleanTarget = targetUrl;
+  try {
+    const res = await fetch(cleanTarget, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Referer': 'https://www.instagram.com/',
+        'Origin': 'https://www.instagram.com'
+      },
+      signal: AbortSignal.timeout(45000)
+    });
+    if (!res.ok) {
+      throw new Error(`CDN returned HTTP ${res.status}`);
     }
-
-    const fetchDirect = (currUrl, redirectCount = 0) => {
-      if (redirectCount > 5) return reject(new Error('Too many redirects'));
-
-      try {
-        const targetObj = new URL(currUrl);
-        const client = targetObj.protocol === 'https:' ? https : http;
-        const headers = {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-          'Accept': '*/*',
-          'Referer': 'https://www.instagram.com/',
-          'Origin': 'https://www.instagram.com'
-        };
-
-        const request = client.get(currUrl, { headers, timeout: 45000 }, (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            const nextUrl = new URL(res.headers.location, currUrl).toString();
-            return fetchDirect(nextUrl, redirectCount + 1);
-          }
-
-          if (res.statusCode >= 400) {
-            return reject(new Error(`CDN returned HTTP ${res.statusCode}`));
-          }
-
-          const fileStream = fs.createWriteStream(destPath);
-          res.pipe(fileStream);
-
-          fileStream.on('finish', () => {
-            fileStream.close(() => resolve(destPath));
-          });
-
-          fileStream.on('error', (err) => {
-            fs.unlink(destPath, () => {});
-            reject(err);
-          });
-        });
-
-        request.on('error', (err) => {
-          fs.unlink(destPath, () => {});
-          reject(err);
-        });
-
-        request.on('timeout', () => {
-          request.destroy();
-          fs.unlink(destPath, () => {});
-          reject(new Error('Download timeout'));
-        });
-      } catch (e) {
-        reject(e);
-      }
-    };
-
-    fetchDirect(cleanTarget);
-  });
+    const fileStream = fs.createWriteStream(destPath);
+    const { Readable } = await import('stream');
+    await new Promise((resolve, reject) => {
+      Readable.fromWeb(res.body).pipe(fileStream)
+        .on('finish', resolve)
+        .on('error', reject);
+    });
+    return destPath;
+  } catch (err) {
+    try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (e) {}
+    throw err;
+  }
 }
 
 // 2. API: Merged Video + Audio Stream Route
@@ -885,6 +852,14 @@ app.get('/api/merge', async (req, res) => {
   let rawAudio = req.query.audioUrl;
   if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
   if (Array.isArray(rawAudio)) rawAudio = rawAudio[0];
+
+  if (req.originalUrl) {
+    try {
+      const fullUrlObj = new URL(req.originalUrl, 'http://localhost');
+      if (fullUrlObj.searchParams.has('videoUrl')) rawVideo = fullUrlObj.searchParams.get('videoUrl');
+      if (fullUrlObj.searchParams.has('audioUrl')) rawAudio = fullUrlObj.searchParams.get('audioUrl');
+    } catch (e) {}
+  }
 
   let videoUrl = rawVideo ? String(rawVideo).trim() : '';
   let audioUrl = rawAudio ? String(rawAudio).trim() : '';
@@ -904,9 +879,6 @@ app.get('/api/merge', async (req, res) => {
         const parsed = new URL(u, `http://localhost:${PORT}`);
         return parsed.searchParams.get('url') || u;
       } catch (e) {}
-    }
-    if (u.includes('%26') || u.includes('%3D')) {
-      u = u.replace(/%26/g, '&').replace(/%3D/g, '=');
     }
     return u;
   }
@@ -928,9 +900,9 @@ app.get('/api/merge', async (req, res) => {
   const tempOutput = path.join(tempDir, `out_${id}.mp4`);
 
   const cleanup = () => {
-    try { fs.unlinkSync(tempVideo); } catch (e) {}
-    try { fs.unlinkSync(tempAudio); } catch (e) {}
-    try { fs.unlinkSync(tempOutput); } catch (e) {}
+    try { if (fs.existsSync(tempVideo)) fs.unlinkSync(tempVideo); } catch (e) {}
+    try { if (fs.existsSync(tempAudio)) fs.unlinkSync(tempAudio); } catch (e) {}
+    try { if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput); } catch (e) {}
   };
 
   try {
