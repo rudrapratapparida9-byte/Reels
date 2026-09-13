@@ -641,92 +641,68 @@ function safeJsonParseFromOutput(output) {
   return null;
 }
 
-// Ultra-Fast Parallel Race Extractor (Executes multiple engines concurrently and returns the fastest winner)
+// Optimized Multi-Tier Extractor Pipeline
 async function extractInstagramFast(targetUrl) {
   const cleanUrl = cleanInstagramUrl(targetUrl);
 
-  const runDirectNode = async () => {
-    try {
-      const res = await extractDirectNode(cleanUrl);
-      if (res && res.success && (res.videoUrl || res.thumbnailUrl)) {
-        if (res.is_video && (!res.audioUrl || res.audioUrl === res.videoUrl)) {
-          return null;
-        }
-        return res;
+  // 1. Native Direct Node extraction (< 500ms)
+  try {
+    const directRes = await extractDirectNode(cleanUrl);
+    if (directRes && directRes.success && (directRes.videoUrl || directRes.thumbnailUrl)) {
+      if (!directRes.is_video || (directRes.audioUrl && directRes.audioUrl !== directRes.videoUrl)) {
+        return directRes;
       }
-    } catch (e) {}
-    return null;
-  };
+    }
+  } catch (e) {
+    console.warn('Direct Node extraction notice:', e.message);
+  }
 
-  const runPythonWorker = async () => {
-    const pyBin = workingPythonBin || (process.platform === 'win32' ? 'python' : 'python3');
-    const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+  // 2. Python worker extraction (yt-dlp module with DASH audio resolution)
+  const pyBin = workingPythonBin || (process.platform === 'win32' ? 'python' : 'python3');
+  const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+  try {
+    const pyRes = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
+      cwd: __dirname,
+      timeout: 25000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+    });
+    if (pyRes && pyRes.stdout) {
+      const parsed = safeJsonParseFromOutput(pyRes.stdout);
+      if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Python worker notice:', err.message);
+  }
+
+  // 3. Standalone yt-dlp binary worker
+  const ytdlpBin = path.join(__dirname, 'yt-dlp');
+  const bins = fs.existsSync(ytdlpBin) ? [ytdlpBin, 'yt-dlp'] : ['yt-dlp'];
+  for (const b of bins) {
     try {
-      const res = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
-        cwd: __dirname,
-        timeout: 25000,
-        maxBuffer: 10 * 1024 * 1024,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-      });
+      const commonHeaders = [
+        '--extractor-args', 'instagram:app_id=936619743392459',
+        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        '--add-header', 'X-IG-App-ID: 936619743392459',
+        '--add-header', 'Accept-Language: en-US,en;q=0.9'
+      ];
+      const args = ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', ...commonHeaders, cleanUrl];
+      const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
       if (res && res.stdout) {
-        const parsed = safeJsonParseFromOutput(res.stdout);
-        if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
+        const info = safeJsonParseFromOutput(res.stdout);
+        const parsed = parseYtdlpInfo(info, cleanUrl);
+        if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
           return parsed;
         }
       }
-    } catch (e) {}
-    return null;
-  };
-
-  const runYtdlpWorker = async () => {
-    const ytdlpBin = path.join(__dirname, 'yt-dlp');
-    const bins = fs.existsSync(ytdlpBin) ? [ytdlpBin, 'yt-dlp'] : ['yt-dlp'];
-    for (const b of bins) {
-      try {
-        const commonHeaders = [
-          '--extractor-args', 'instagram:app_id=936619743392459',
-          '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-          '--add-header', 'X-IG-App-ID: 936619743392459',
-          '--add-header', 'Accept-Language: en-US,en;q=0.9'
-        ];
-        const args = ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', ...commonHeaders, cleanUrl];
-        const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
-        if (res && res.stdout) {
-          const info = safeJsonParseFromOutput(res.stdout);
-          const parsed = parseYtdlpInfo(info, cleanUrl);
-          if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
-            return parsed;
-          }
-        }
-      } catch (e) {}
+    } catch (err) {
+      console.warn('yt-dlp binary notice:', err.message);
     }
-    return null;
-  };
+  }
 
-  return new Promise((resolve) => {
-    let resolved = false;
-    let finishedCount = 0;
-    const workers = [runDirectNode(), runPythonWorker(), runYtdlpWorker()];
-    const total = workers.length;
-
-    workers.forEach((p) => {
-      p.then((res) => {
-        if (!resolved && res && res.success && (res.videoUrl || res.audioUrl || res.thumbnailUrl)) {
-          resolved = true;
-          return resolve(res);
-        }
-        finishedCount++;
-        if (finishedCount === total && !resolved) {
-          resolve(null);
-        }
-      }).catch(() => {
-        finishedCount++;
-        if (finishedCount === total && !resolved) {
-          resolve(null);
-        }
-      });
-    });
-  });
+  return null;
 }
 
 // 1. API: Instagram Media Extraction
