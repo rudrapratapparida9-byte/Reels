@@ -158,12 +158,7 @@ def extract_with_ytdlp(url_or_shortcode):
             continue
 
         is_audio_only = (fid.endswith('a') or 'audio' in fid or (acodec and acodec != 'none')) and (not vcodec or vcodec == 'none')
-        is_progressive = (
-            (vcodec and vcodec != 'none' and acodec and acodec != 'none') or
-            fid.isdigit() or
-            'xpv_progressive' in f_url or
-            'progressive_recipe=1' in f_url
-        )
+        is_progressive = (vcodec and vcodec != 'none' and acodec and acodec != 'none')
         is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264')
         is_dash_video = fid.endswith('v') or (vcodec and vcodec != 'none' and (not acodec or acodec == 'none'))
         is_video = (vcodec and vcodec != 'none') or fid.endswith('v') or is_h264
@@ -184,9 +179,9 @@ def extract_with_ytdlp(url_or_shortcode):
             generic_video_url = f_url
 
     video_url = progressive_url or info.get('url') or h264_video_url or dash_video_url or generic_video_url
-    final_audio_url = audio_url or progressive_url or video_url
+    final_audio_url = audio_url or (progressive_url if is_progressive else None) or video_url
     video_only_url = dash_video_url or h264_video_url or generic_video_url or progressive_url or video_url
-    has_separate_audio = bool(not progressive_url and (dash_video_url or h264_video_url) and audio_url)
+    has_separate_audio = bool(audio_url and video_url and audio_url != video_url)
 
     shortcode = extract_shortcode(url_or_shortcode) or info.get('id', 'media')
     uploader = info.get('uploader') or info.get('uploader_id') or 'instagram_creator'
@@ -277,11 +272,29 @@ def get_reel_audio_and_video(url_or_shortcode):
                             if base is not None and base.text:
                                 audio_stream_url = base.text.strip()
                                 break
+                    if not audio_stream_url:
+                        for adapt in root.iter('{urn:mpeg:dash:schema:mpd:2011}AdaptationSet'):
+                            mime = str(adapt.get('mimeType', '') or adapt.get('contentType', '')).lower()
+                            if 'audio' in mime:
+                                for rep in adapt.iter('{urn:mpeg:dash:schema:mpd:2011}Representation'):
+                                    base = rep.find('{urn:mpeg:dash:schema:mpd:2011}BaseURL')
+                                    if base is not None and base.text:
+                                        audio_stream_url = base.text.strip()
+                                        break
+                                if audio_stream_url:
+                                    break
                 except Exception:
                     pass
 
+            clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
+            music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
+            music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}
+            clips_audio = music_meta.get('progressive_download_url') or music_meta.get('fast_start_progressive_download_url')
+            if not audio_stream_url and clips_audio:
+                audio_stream_url = clips_audio
+
             final_audio_url = audio_stream_url or video_url
-            has_sep_audio = bool(not progressive_url and is_video and audio_stream_url)
+            has_sep_audio = bool(audio_stream_url and video_url and audio_stream_url != video_url)
             clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
             music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
             music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}

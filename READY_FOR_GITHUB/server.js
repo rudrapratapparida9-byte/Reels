@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
@@ -24,9 +25,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// High-speed In-Memory Cache (TTL: 10 minutes)
+// Enable Gzip/Deflate compression for all responses (reduces network payload by up to 75%)
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
+  threshold: 1024
+}));
+
+// Fast In-Memory Cache (TTL: 15 minutes, up to 200 items)
 const mediaCache = new Map();
-const CACHE_TTL_MS = 10 * 60 * 1000;
+const CACHE_TTL_MS = 15 * 60 * 1000;
 
 function getCached(key) {
   const item = mediaCache.get(key);
@@ -39,31 +49,36 @@ function getCached(key) {
 }
 
 function setCached(key, data) {
-  if (mediaCache.size > 500) {
+  if (mediaCache.size > 200) {
     const oldestKey = mediaCache.keys().next().value;
     mediaCache.delete(oldestKey);
   }
   mediaCache.set(key, { data, timestamp: Date.now() });
 }
 
-// Universal CORS headers for all browser clients
+// Auto-detect working Python binary on startup
+let workingPythonBin = null;
+async function detectPythonBinary() {
+  const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  for (const bin of candidates) {
+    try {
+      await execFileAsync(bin, ['--version'], { timeout: 2000 });
+      workingPythonBin = bin;
+      console.log(`✅ Detected working Python binary: ${bin}`);
+      return;
+    } catch (e) {}
+  }
+  console.warn('⚠️ No native Python binary detected.');
+}
+detectPythonBinary().catch(() => {});
+
+// Universal CORS headers
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
-  }
-  next();
-});
-
-// Serve static frontend assets with automatic mobile/desktop cache busting
-app.use((req, res, next) => {
-  if (req.path === '/' || req.path === '/index.html') {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('Clear-Site-Data', '"cache"');
   }
   next();
 });
@@ -81,13 +96,29 @@ app.get('/robots.txt', (req, res) => {
   res.send("User-agent: *\nAllow: /\nSitemap: https://reels-1-nvfo.onrender.com/sitemap.xml\n");
 });
 
+app.get('/sitemap.xml', (req, res) => {
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  const sitemapPath = path.join(__dirname, 'public', 'sitemap.xml');
+  if (fs.existsSync(sitemapPath)) {
+    return res.sendFile(sitemapPath);
+  }
+  res.send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://reels-1-nvfo.onrender.com/</loc><priority>1.0</priority></url></urlset>');
+});
+
+// Serve frontend static assets with high-speed caching
 app.use(express.static(path.join(__dirname, 'dist'), {
+  etag: true,
+  lastModified: true,
+  maxAge: '1y',
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('index.html')) {
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+      res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.setHeader('Clear-Site-Data', '"cache"');
+    } else if (filePath.includes('/assets/') || filePath.includes('\\assets\\')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
     }
   }
 }));
@@ -95,7 +126,8 @@ app.use(express.static(path.join(__dirname, 'dist'), {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '5.5.0-audio-options',
+    version: '6.0.0-turbo-fast',
+    pythonBin: workingPythonBin,
     cachedEntries: mediaCache.size,
     time: new Date().toISOString()
   });
@@ -109,10 +141,10 @@ app.get('/api/clear-cache', (req, res) => {
 
 app.get('/api/debug-ytdlp', async (req, res) => {
   const targetUrl = cleanInstagramUrl(req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/');
+  const pyBin = workingPythonBin || 'python';
   const ytdlpCommands = [
     { name: './yt-dlp', bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', targetUrl] },
-    { name: 'python3 extract', bin: 'python3', args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] },
-    { name: 'python3 yt_dlp', bin: 'python3', args: ['-m', 'yt_dlp', '-j', '--no-warnings', targetUrl] }
+    { name: `${pyBin} extract`, bin: pyBin, args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] }
   ];
 
   const results = [];
@@ -127,7 +159,6 @@ app.get('/api/debug-ytdlp', async (req, res) => {
         time: Date.now() - start,
         success: true,
         keys: parsed ? Object.keys(parsed) : null,
-        formats: parsed && parsed.formats ? parsed.formats.map(f => ({ id: f.format_id, acodec: f.acodec, vcodec: f.vcodec, url_prefix: f.url ? f.url.slice(0, 60) : null })) : null,
         videoUrl: parsed ? (parsed.videoUrl || parsed.url) : null,
         audioUrl: parsed ? parsed.audioUrl : null
       });
@@ -139,13 +170,14 @@ app.get('/api/debug-ytdlp', async (req, res) => {
   res.json({ targetUrl, results });
 });
 
-const BRIDGE_URL = process.env.EXTRACTION_BRIDGE_URL || 'https://critical-balance-william-soldier.trycloudflare.com';
+const BRIDGE_URL = process.env.EXTRACTION_BRIDGE_URL || '';
 
 function shouldBridge(req) {
+  if (!BRIDGE_URL) return false;
   const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
   const reqHost = (req.headers.host || '').toLowerCase();
   const isSelf = BRIDGE_URL.toLowerCase().includes(reqHost);
-  return !isBridgeRequest && !isSelf && Boolean(BRIDGE_URL);
+  return !isBridgeRequest && !isSelf;
 }
 
 function proxyThroughBridge(req, res, fallback) {
@@ -266,7 +298,9 @@ function parseYtdlpInfo(info, targetUrl) {
   if (!info) return null;
   const formats = info.formats || [];
   let audioUrl = null;
+  let h264VideoUrl = null;
   let dashVideoUrl = null;
+  let genericVideoUrl = null;
   let progressiveUrl = null;
 
   for (const f of formats) {
@@ -277,11 +311,10 @@ function parseYtdlpInfo(info, targetUrl) {
     if (!fUrl) continue;
 
     const isAudioOnly = (fid.endsWith('a') || fid.includes('audio') || (acodec && acodec !== 'none')) && (!vcodec || vcodec === 'none');
-    const isProgressive = (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') ||
-                          /^\d+$/.test(fid) ||
-                          fUrl.includes('xpv_progressive') ||
-                          fUrl.includes('progressive_recipe=1');
+    const isProgressive = (vcodec && vcodec !== 'none' && acodec && acodec !== 'none');
+    const isH264 = vcodec.startsWith('avc') || vcodec.startsWith('h264');
     const isDashVideo = fid.endsWith('v') || (vcodec && vcodec !== 'none' && (!acodec || acodec === 'none'));
+    const isVideo = (vcodec && vcodec !== 'none') || fid.endsWith('v') || isH264;
 
     if (isAudioOnly) {
       if (!audioUrl) audioUrl = fUrl;
@@ -289,12 +322,17 @@ function parseYtdlpInfo(info, targetUrl) {
       if (!progressiveUrl) progressiveUrl = fUrl;
     } else if (isDashVideo) {
       if (!dashVideoUrl) dashVideoUrl = fUrl;
+    } else if (isH264) {
+      if (!h264VideoUrl) h264VideoUrl = fUrl;
+    } else if (isVideo && !genericVideoUrl) {
+      genericVideoUrl = fUrl;
     }
   }
 
-  const videoUrl = progressiveUrl || dashVideoUrl || info.url;
-  const finalAudioUrl = audioUrl || progressiveUrl || videoUrl;
-  const videoOnlyUrl = dashVideoUrl || progressiveUrl || videoUrl;
+  const videoUrl = progressiveUrl || info.url || h264VideoUrl || dashVideoUrl || genericVideoUrl;
+  const finalAudioUrl = audioUrl || (progressiveUrl ? progressiveUrl : (info.url && !info.vcodec ? info.url : videoUrl));
+  const videoOnlyUrl = dashVideoUrl || h264VideoUrl || genericVideoUrl || progressiveUrl || videoUrl;
+  const hasSeparateAudio = Boolean(audioUrl && videoUrl && audioUrl !== videoUrl);
 
   const shortcode = info.id || (cleanInstagramUrl(targetUrl).match(/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i)?.[1]) || 'media';
   const uploader = info.uploader || info.uploader_id || 'instagram_creator';
@@ -318,7 +356,7 @@ function parseYtdlpInfo(info, targetUrl) {
     videoUrl: videoUrl,
     videoWithAudioUrl: progressiveUrl || videoUrl,
     videoOnlyUrl: videoOnlyUrl,
-    hasSeparateAudio: Boolean(dashVideoUrl && audioUrl && !progressiveUrl),
+    hasSeparateAudio: hasSeparateAudio,
     thumbnailUrl: thumbnail,
     images: thumbnail ? [thumbnail] : [],
     audioTitle: audioTitle,
@@ -327,36 +365,263 @@ function parseYtdlpInfo(info, targetUrl) {
   };
 }
 
-async function extractWithYtdlpDirect(targetUrl) {
-  const bins = [
-    path.join(__dirname, 'yt-dlp'),
-    'yt-dlp',
-    './yt-dlp'
-  ];
-
-  for (const b of bins) {
-    if ((b.startsWith('.') || path.isAbsolute(b)) && !fs.existsSync(b)) continue;
+function fetchHttpBuffer(targetUrl, headers = {}, timeout = 2500) {
+  return new Promise((resolve) => {
     try {
-      const args = [
-        '-j',
-        '--no-warnings',
-        '--no-check-certificates',
-        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        '--add-header', 'X-IG-App-ID: 936619743392459',
-        '--add-header', 'Accept-Language: en-US,en;q=0.9',
-        targetUrl
-      ];
-      const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 25000, maxBuffer: 20 * 1024 * 1024 });
+      const parsed = new URL(targetUrl);
+      const client = parsed.protocol === 'https:' ? https : http;
+      const req = client.get(targetUrl, { headers, timeout }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          let loc = res.headers.location;
+          if (!loc.startsWith('http')) loc = new URL(loc, targetUrl).href;
+          return fetchHttpBuffer(loc, headers, timeout).then(resolve);
+        }
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, data }));
+      });
+      req.on('error', (e) => resolve({ status: 500, error: e.message, data: '' }));
+      req.on('timeout', () => { req.destroy(); resolve({ status: 408, error: 'Timeout', data: '' }); });
+    } catch (err) {
+      resolve({ status: 500, error: err.message, data: '' });
+    }
+  });
+}
+
+function findMediaItemInObject(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (obj.video_versions || (obj.image_versions2 && (obj.user || obj.owner)) || obj.xdt_shortcode_media) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const res = findMediaItemInObject(item);
+      if (res) return res;
+    }
+  } else {
+    for (const key of Object.keys(obj)) {
+      const res = findMediaItemInObject(obj[key]);
+      if (res) return res;
+    }
+  }
+  return null;
+}
+
+function parseDashAudioFromManifest(manifest) {
+  if (!manifest) return null;
+  try {
+    const audioSetMatch = manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^"]*"[\s\S]*?<\/AdaptationSet>/i);
+    if (audioSetMatch) {
+      const baseMatch = audioSetMatch[0].match(/<BaseURL>([^<]+)<\/BaseURL>/i);
+      if (baseMatch) {
+        let url = baseMatch[1].trim();
+        return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+      }
+    }
+    const audioRepMatch = manifest.match(/<Representation[^>]*id="[^"]*audio[^"]*"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<Representation[^>]*id="[^"]*a"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<Representation[^>]*mimeType="audio[^"]*"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^"]*"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i);
+    if (audioRepMatch) {
+      let url = audioRepMatch[1].trim();
+      return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+    }
+  } catch (e) {}
+  return null;
+}
+
+// Native Direct Node.js Extractor (< 1000ms)
+async function extractDirectNode(targetUrl) {
+  const shortcodeMatch = targetUrl.match(/(?:reel|reels|p|tv|share\/reel|share\/p|stories\/[^/]+)\/([A-Za-z0-9_-]+)/i);
+  const shortcode = shortcodeMatch ? shortcodeMatch[1] : null;
+  if (!shortcode || shortcode === 'audio') return null;
+
+  const cleanUrl = `https://www.instagram.com/reel/${shortcode}/`;
+  const res = await fetchHttpBuffer(cleanUrl, {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Sec-Fetch-Site': 'none'
+  }, 2000);
+
+  if (!res || !res.data) return null;
+
+  const html = res.data;
+  const scriptRegex = /<script\s+type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  while ((match = scriptRegex.exec(html)) !== null) {
+    const content = match[1];
+    if (content.includes('video_versions') || content.includes('image_versions2') || content.includes('xdt_shortcode_media')) {
+      try {
+        const parsed = JSON.parse(content);
+        const item = findMediaItemInObject(parsed);
+        if (item) {
+          const media = item.xdt_shortcode_media || item;
+          const uploader = media.user?.username || media.owner?.username || 'instagram_creator';
+          const caption = (typeof media.caption === 'string' ? media.caption : media.caption?.text) || 
+                          (media.edge_media_to_caption?.edges?.[0]?.node?.text) || '';
+          
+          let videoUrl = null;
+          let progressiveUrl = null;
+          let dashAudioUrl = null;
+
+          if (media.video_versions && media.video_versions.length > 0) {
+            const sorted = [...media.video_versions].sort((a, b) => (b.width || 0) - (a.width || 0));
+            const prog = sorted.find(v => v.url && (v.url.includes('xpv_progressive') || v.url.includes('progressive_recipe=1')));
+            progressiveUrl = prog ? prog.url : sorted[0].url;
+            videoUrl = progressiveUrl;
+          } else if (media.video_url) {
+            videoUrl = media.video_url;
+            progressiveUrl = media.video_url;
+          }
+
+          if (media.video_dash_manifest) {
+            dashAudioUrl = parseDashAudioFromManifest(media.video_dash_manifest);
+          }
+
+          const clips = media.clips_metadata || {};
+          const musicInfo = clips.music_info?.music_asset_info || clips.original_sound_info || {};
+          const clipsAudioUrl = musicInfo.progressive_download_url || musicInfo.fast_start_progressive_download_url || null;
+          if (!dashAudioUrl && clipsAudioUrl) {
+            dashAudioUrl = clipsAudioUrl;
+          }
+
+          const finalAudioUrl = dashAudioUrl || progressiveUrl || videoUrl;
+          const hasSeparateAudio = Boolean(dashAudioUrl && videoUrl && dashAudioUrl !== videoUrl);
+
+          let thumbUrl = null;
+          if (media.image_versions2?.candidates?.length > 0) {
+            thumbUrl = media.image_versions2.candidates[0].url;
+          } else if (media.display_uri || media.display_url) {
+            thumbUrl = media.display_uri || media.display_url;
+          }
+
+          let images = [];
+          if (media.carousel_media && Array.isArray(media.carousel_media)) {
+            images = media.carousel_media.map(m => m.image_versions2?.candidates?.[0]?.url || m.display_uri || m.video_versions?.[0]?.url).filter(Boolean);
+          } else if (media.edge_sidecar_to_children?.edges) {
+            images = media.edge_sidecar_to_children.edges.map(e => e.node?.display_url || e.node?.video_url).filter(Boolean);
+          }
+          if (images.length === 0 && thumbUrl) {
+            images = [thumbUrl];
+          }
+
+          const track = musicInfo.title || musicInfo.original_audio_title || 'Original Audio';
+          const artist = musicInfo.display_artist || musicInfo.ig_artist?.username || uploader;
+          const audioTitle = musicInfo.title ? `${artist} • ${track} (320kbps MP3)` : `@${uploader} • Original Audio (320kbps MP3)`;
+          const durationText = media.video_duration ? `${Math.round(media.video_duration)}s HD` : (videoUrl ? 'HD 1080p' : 'HD Lossless');
+
+          return {
+            success: true,
+            id: `insta_${shortcode}`,
+            shortcode: shortcode,
+            type: videoUrl ? 'reel' : 'photo',
+            title: `Post by @${uploader}`,
+            username: `@${uploader}`,
+            userAvatar: media.user?.profile_pic_url || media.owner?.profile_pic_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+            caption: caption,
+            likes: media.like_count ? Number(media.like_count).toLocaleString() : 'Trending',
+            comments: media.comment_count ? Number(media.comment_count).toLocaleString() : 'Public',
+            is_video: Boolean(videoUrl),
+            videoUrl: videoUrl,
+            videoWithAudioUrl: progressiveUrl || videoUrl,
+            videoOnlyUrl: videoUrl,
+            hasSeparateAudio: hasSeparateAudio,
+            thumbnailUrl: thumbUrl,
+            images: images,
+            audioTitle: audioTitle,
+            audioUrl: finalAudioUrl,
+            duration: durationText
+          };
+        }
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+// Ultra-Fast Parallel Race Extractor (Executes multiple engines concurrently and returns the fastest winner)
+async function extractInstagramFast(targetUrl) {
+  const cleanUrl = cleanInstagramUrl(targetUrl);
+
+  const runDirectNode = async () => {
+    try {
+      const res = await extractDirectNode(cleanUrl);
+      if (res && res.success && (res.videoUrl || res.audioUrl || res.thumbnailUrl)) {
+        return res;
+      }
+    } catch (e) {}
+    return null;
+  };
+
+  const runPythonWorker = async () => {
+    const pyBin = workingPythonBin || (process.platform === 'win32' ? 'python' : 'python3');
+    const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+    try {
+      const res = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
+        cwd: __dirname,
+        timeout: 8000,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+      });
       if (res && res.stdout) {
-        const info = JSON.parse(res.stdout.trim());
-        const parsed = parseYtdlpInfo(info, targetUrl);
-        if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
+        const parsed = JSON.parse(res.stdout.trim());
+        if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
           return parsed;
         }
       }
     } catch (e) {}
-  }
-  return null;
+    return null;
+  };
+
+  const runYtdlpWorker = async () => {
+    const ytdlpBin = path.join(__dirname, 'yt-dlp');
+    const bins = fs.existsSync(ytdlpBin) ? [ytdlpBin, 'yt-dlp'] : ['yt-dlp'];
+    for (const b of bins) {
+      try {
+        const commonHeaders = [
+          '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          '--add-header', 'X-IG-App-ID: 936619743392459',
+          '--add-header', 'Accept-Language: en-US,en;q=0.9'
+        ];
+        const args = ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '5', ...commonHeaders, cleanUrl];
+        const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 8000, maxBuffer: 10 * 1024 * 1024 });
+        if (res && res.stdout) {
+          const info = JSON.parse(res.stdout.trim());
+          const parsed = parseYtdlpInfo(info, cleanUrl);
+          if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
+            return parsed;
+          }
+        }
+      } catch (e) {}
+    }
+    return null;
+  };
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    let finishedCount = 0;
+    const workers = [runDirectNode(), runPythonWorker(), runYtdlpWorker()];
+    const total = workers.length;
+
+    workers.forEach((p) => {
+      p.then((res) => {
+        if (!resolved && res && res.success && (res.videoUrl || res.audioUrl || res.thumbnailUrl)) {
+          resolved = true;
+          return resolve(res);
+        }
+        finishedCount++;
+        if (finishedCount === total && !resolved) {
+          resolve(null);
+        }
+      }).catch(() => {
+        finishedCount++;
+        if (finishedCount === total && !resolved) {
+          resolve(null);
+        }
+      });
+    });
+  });
 }
 
 // 1. API: Instagram Media Extraction
@@ -368,67 +633,14 @@ app.get('/api/instagram', async (req, res) => {
 
   const targetUrl = cleanInstagramUrl(rawTargetUrl);
   
-  // Check memory cache first
+  // Check memory cache first (< 1ms instant response)
   const cached = getCached(targetUrl);
   if (cached) {
     return res.json(cached);
   }
 
   try {
-    let result = null;
-    const isBridgeRequest = req.query.nobridge === '1' || req.headers['x-bridge-request'] === 'true';
-
-    // 1. Standalone Direct yt-dlp binary extraction
-    result = await extractWithYtdlpDirect(targetUrl);
-
-    // 2. Fast Residential Bridge
-    if ((!result || !result.success) && !isBridgeRequest) {
-      const bridgeUrls = [
-        process.env.EXTRACTION_BRIDGE_URL,
-        'https://critical-balance-william-soldier.trycloudflare.com'
-      ].filter(Boolean);
-
-      for (const bridge of bridgeUrls) {
-        try {
-          const bRes = await fetch(`${bridge}/api/instagram?url=${encodeURIComponent(targetUrl)}&nobridge=1`, {
-            headers: { 'Accept': 'application/json', 'X-Bridge-Request': 'true' },
-            signal: AbortSignal.timeout(8000)
-          });
-          if (bRes.ok) {
-            const bJson = await bRes.json();
-            if (bJson && bJson.success && bJson.data) {
-              result = { success: true, ...bJson.data };
-              break;
-            }
-          }
-        } catch (bErr) {}
-      }
-    }
-
-    // 3. Direct Python Extractor (Fallback)
-    if (!result || !result.success) {
-      const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
-      const pyOpts = {
-        cwd: __dirname,
-        timeout: 15000,
-        maxBuffer: 20 * 1024 * 1024,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-      };
-
-      const pythonBins = ['python3', 'python', 'py'];
-      for (const bin of pythonBins) {
-        try {
-          const pyRes = await execFileAsync(bin, [scriptPath, targetUrl], pyOpts);
-          if (pyRes && pyRes.stdout) {
-            const parsed = JSON.parse(pyRes.stdout.trim());
-            if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
-              result = parsed;
-              break;
-            }
-          }
-        } catch (err) {}
-      }
-    }
+    const result = await extractInstagramFast(targetUrl);
 
     if (!result || !result.success) {
       return res.status(400).json({ success: false, error: (result && result.error) || 'Unable to extract Instagram media. Please make sure the link is from a public post.' });
@@ -477,11 +689,11 @@ app.get('/api/instagram', async (req, res) => {
     }
     const rawThumb = extractRawUrl(result.thumbnailUrl);
 
-    // If separate audio stream exists and differs from the video URL, ALWAYS merge with FFmpeg to guarantee sound
-    const hasSeparateAudio = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
+    // If separate audio stream exists and is distinct from video, merge with FFmpeg
+    const isVideoOnlyStream = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
 
     const proxiedVideoWithAudioUrl = rawVideo 
-      ? (hasSeparateAudio
+      ? (isVideoOnlyStream
           ? `/api/merge?videoUrl=${encodeURIComponent(rawVideo)}&audioUrl=${encodeURIComponent(rawAudio)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_with_audio.mp4`)}&inline=true`
           : `/api/stream?url=${encodeURIComponent(rawVideo)}&filename=${encodeURIComponent(`insta_${cleanShortcode}_with_audio.mp4`)}&inline=true`)
       : null;
@@ -601,7 +813,7 @@ function downloadToTempFile(targetUrl, destPath) {
   });
 }
 
-// 2. API: Merged Video + Audio Stream Route (Guaranteed 100% Sound via Local Muxing)
+// 2. API: Merged Video + Audio Stream Route
 app.get('/api/merge', async (req, res) => {
   let rawVideo = req.query.videoUrl;
   let rawAudio = req.query.audioUrl;
@@ -639,7 +851,6 @@ app.get('/api/merge', async (req, res) => {
   const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
   const disposition = isDownload ? 'attachment' : 'inline';
 
-  // If no separate audio is provided or audio matches video, proxy the video directly
   if (!audioUrl || audioUrl === videoUrl) {
     return res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
   }
@@ -657,7 +868,6 @@ app.get('/api/merge', async (req, res) => {
   };
 
   try {
-    // Concurrently download both video and audio streams via Node HTTPS client
     await Promise.all([
       downloadToTempFile(videoUrl, tempVideo),
       downloadToTempFile(audioUrl, tempAudio)
@@ -690,7 +900,7 @@ app.get('/api/merge', async (req, res) => {
     const stat = fs.statSync(tempOutput);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', stat.size);
-    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
@@ -711,7 +921,7 @@ app.get('/api/merge', async (req, res) => {
   }
 });
 
-// 3. API: Muted Video Route (Guaranteed 100% Silent via FFmpeg -an)
+// 3. API: Muted Video Route
 app.get('/api/mute', async (req, res) => {
   let rawVideo = req.query.url || req.query.videoUrl;
   if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
@@ -726,7 +936,6 @@ app.get('/api/mute', async (req, res) => {
     return res.status(400).send('Missing video URL parameter');
   }
 
-  // Unwrap nested proxy URLs if passed
   if (videoUrl.includes('/api/stream?url=') || videoUrl.includes('/api/mute?url=')) {
     try {
       const parsed = new URL(videoUrl, `http://localhost:${PORT}`);
@@ -775,7 +984,7 @@ app.get('/api/mute', async (req, res) => {
     const stat = fs.statSync(tempOutput);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', stat.size);
-    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"`);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type, Accept-Ranges');
@@ -811,7 +1020,6 @@ app.get('/api/audio', (req, res) => {
       return res.status(400).send('Missing audio stream URL');
     }
 
-    // Unwrap if nested stream URL
     if (audioUrl.startsWith('/api/stream') || audioUrl.startsWith('/api/audio')) {
       try {
         const parsed = new URL(audioUrl, `http://localhost:${PORT}`);
@@ -819,8 +1027,13 @@ app.get('/api/audio', (req, res) => {
       } catch (e) {}
     }
 
+    if (audioUrl.includes('%26') || audioUrl.includes('%3D')) {
+      audioUrl = audioUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
+    }
+
     const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
     const disposition = (isInline && !isDownload) ? 'inline' : 'attachment';
+    const ffmpegBin = ffmpegPath || 'ffmpeg';
 
     try {
       const parsedAudioUrl = new URL(audioUrl);
@@ -929,7 +1142,7 @@ app.get('/api/audio', (req, res) => {
   });
 });
 
-// 4. API: Media Stream & Proxy Route
+// 5. API: Media Stream & Proxy Route
 app.get('/api/stream', (req, res) => {
   proxyThroughBridge(req, res, () => {
     let rawStreamUrl = req.query.url;
@@ -949,7 +1162,6 @@ app.get('/api/stream', (req, res) => {
       return res.status(400).send('Missing media stream URL.');
     }
 
-    // If a relative or nested /api/stream was passed, unwrap it
     if (streamUrl.startsWith('/api/stream')) {
       try {
         const parsed = new URL(streamUrl, `http://localhost:${PORT}`);
@@ -960,7 +1172,6 @@ app.get('/api/stream', (req, res) => {
       }
     }
 
-    // Normalize URL encoding (fix double-encoded & and = from CDN signatures)
     if (streamUrl.includes('%26') || streamUrl.includes('%3D')) {
       streamUrl = streamUrl.replace(/%26/g, '&').replace(/%3D/g, '=');
     }
@@ -1063,15 +1274,45 @@ app.get('/api/stream', (req, res) => {
     fetchWithRedirects(streamUrl);
   });
 });
-// Single Page Application Fallback Middleware (Express 5 safe)
+
+// Single Page Application Fallback Middleware
 app.use((req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+  res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.setHeader('Clear-Site-Data', '"cache"');
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
+// Built-in Auto Keep-Alive for Render Free Tier (pings every 8 minutes)
+function startKeepAlive() {
+  const targetUrl = process.env.RENDER_EXTERNAL_URL || 'https://reels-1-nvfo.onrender.com';
+  const PING_INTERVAL = 8 * 60 * 1000; // 8 minutes
+
+  setInterval(() => {
+    try {
+      const pingUrl = `${targetUrl.replace(/\/+$/, '')}/api/health`;
+      const client = pingUrl.startsWith('https') ? https : http;
+      
+      const pingReq = client.get(pingUrl, { timeout: 10000 }, (resp) => {
+        resp.resume();
+        console.log(`[Keep-Alive] Self-ping status ${resp.statusCode} at ${new Date().toISOString()}`);
+      });
+
+      pingReq.on('error', (err) => {
+        console.log(`[Keep-Alive] Ping notice: ${err.message}`);
+      });
+
+      pingReq.on('timeout', () => {
+        pingReq.destroy();
+      });
+    } catch (e) {
+      console.log(`[Keep-Alive] Error:`, e.message);
+    }
+  }, PING_INTERVAL);
+
+  console.log(`[Keep-Alive] Background worker active for ${targetUrl}`);
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 ReelsVault Standalone Server running on http://localhost:${PORT}`);
+  startKeepAlive();
 });

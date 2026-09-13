@@ -2,3 +2,5 @@ node_modules/
 mingit/
 .env
 push_git.py
+scratch/
+yt-dlp

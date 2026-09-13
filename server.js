@@ -311,10 +311,7 @@ function parseYtdlpInfo(info, targetUrl) {
     if (!fUrl) continue;
 
     const isAudioOnly = (fid.endsWith('a') || fid.includes('audio') || (acodec && acodec !== 'none')) && (!vcodec || vcodec === 'none');
-    const isProgressive = (vcodec && vcodec !== 'none' && acodec && acodec !== 'none') ||
-                          /^\d+$/.test(fid) ||
-                          fUrl.includes('xpv_progressive') ||
-                          fUrl.includes('progressive_recipe=1');
+    const isProgressive = (vcodec && vcodec !== 'none' && acodec && acodec !== 'none');
     const isH264 = vcodec.startsWith('avc') || vcodec.startsWith('h264');
     const isDashVideo = fid.endsWith('v') || (vcodec && vcodec !== 'none' && (!acodec || acodec === 'none'));
     const isVideo = (vcodec && vcodec !== 'none') || fid.endsWith('v') || isH264;
@@ -333,9 +330,9 @@ function parseYtdlpInfo(info, targetUrl) {
   }
 
   const videoUrl = progressiveUrl || info.url || h264VideoUrl || dashVideoUrl || genericVideoUrl;
-  const finalAudioUrl = audioUrl || progressiveUrl || videoUrl;
+  const finalAudioUrl = audioUrl || (progressiveUrl ? progressiveUrl : (info.url && !info.vcodec ? info.url : videoUrl));
   const videoOnlyUrl = dashVideoUrl || h264VideoUrl || genericVideoUrl || progressiveUrl || videoUrl;
-  const hasSeparateAudio = Boolean(!progressiveUrl && (dashVideoUrl || h264VideoUrl) && audioUrl);
+  const hasSeparateAudio = Boolean(audioUrl && videoUrl && audioUrl !== videoUrl);
 
   const shortcode = info.id || (cleanInstagramUrl(targetUrl).match(/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i)?.[1]) || 'media';
   const uploader = info.uploader || info.uploader_id || 'instagram_creator';
@@ -412,12 +409,25 @@ function findMediaItemInObject(obj) {
 
 function parseDashAudioFromManifest(manifest) {
   if (!manifest) return null;
-  const audioRepMatch = manifest.match(/<Representation[^>]*id="[^"]*audio[^"]*"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                        manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^"]*"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i);
-  if (!audioRepMatch) return null;
-  let url = audioRepMatch[1].trim();
-  url = url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
-  return url;
+  try {
+    const audioSetMatch = manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^"]*"[\s\S]*?<\/AdaptationSet>/i);
+    if (audioSetMatch) {
+      const baseMatch = audioSetMatch[0].match(/<BaseURL>([^<]+)<\/BaseURL>/i);
+      if (baseMatch) {
+        let url = baseMatch[1].trim();
+        return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+      }
+    }
+    const audioRepMatch = manifest.match(/<Representation[^>]*id="[^"]*audio[^"]*"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<Representation[^>]*id="[^"]*a"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<Representation[^>]*mimeType="audio[^"]*"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^"]*"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i);
+    if (audioRepMatch) {
+      let url = audioRepMatch[1].trim();
+      return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+    }
+  } catch (e) {}
+  return null;
 }
 
 // Native Direct Node.js Extractor (< 1000ms)
@@ -469,7 +479,15 @@ async function extractDirectNode(targetUrl) {
             dashAudioUrl = parseDashAudioFromManifest(media.video_dash_manifest);
           }
 
+          const clips = media.clips_metadata || {};
+          const musicInfo = clips.music_info?.music_asset_info || clips.original_sound_info || {};
+          const clipsAudioUrl = musicInfo.progressive_download_url || musicInfo.fast_start_progressive_download_url || null;
+          if (!dashAudioUrl && clipsAudioUrl) {
+            dashAudioUrl = clipsAudioUrl;
+          }
+
           const finalAudioUrl = dashAudioUrl || progressiveUrl || videoUrl;
+          const hasSeparateAudio = Boolean(dashAudioUrl && videoUrl && dashAudioUrl !== videoUrl);
 
           let thumbUrl = null;
           if (media.image_versions2?.candidates?.length > 0) {
@@ -488,8 +506,6 @@ async function extractDirectNode(targetUrl) {
             images = [thumbUrl];
           }
 
-          const clips = media.clips_metadata || {};
-          const musicInfo = clips.music_info?.music_asset_info || clips.original_sound_info || {};
           const track = musicInfo.title || musicInfo.original_audio_title || 'Original Audio';
           const artist = musicInfo.display_artist || musicInfo.ig_artist?.username || uploader;
           const audioTitle = musicInfo.title ? `${artist} • ${track} (320kbps MP3)` : `@${uploader} • Original Audio (320kbps MP3)`;
@@ -510,7 +526,7 @@ async function extractDirectNode(targetUrl) {
             videoUrl: videoUrl,
             videoWithAudioUrl: progressiveUrl || videoUrl,
             videoOnlyUrl: videoUrl,
-            hasSeparateAudio: Boolean(dashAudioUrl && !progressiveUrl),
+            hasSeparateAudio: hasSeparateAudio,
             thumbnailUrl: thumbUrl,
             images: images,
             audioTitle: audioTitle,
@@ -673,8 +689,8 @@ app.get('/api/instagram', async (req, res) => {
     }
     const rawThumb = extractRawUrl(result.thumbnailUrl);
 
-    // Only merge with FFmpeg if video stream is strictly video-only without integrated audio
-    const isVideoOnlyStream = Boolean(result.hasSeparateAudio && rawAudio && rawVideo && rawAudio !== rawVideo);
+    // If separate audio stream exists and is distinct from video, merge with FFmpeg
+    const isVideoOnlyStream = Boolean(rawAudio && rawVideo && rawAudio !== rawVideo);
 
     const proxiedVideoWithAudioUrl = rawVideo 
       ? (isVideoOnlyStream
