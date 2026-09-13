@@ -730,6 +730,14 @@ app.get('/api/instagram', async (req, res) => {
     function extractRawUrl(streamOrRawUrl) {
       if (!streamOrRawUrl) return null;
       if (typeof streamOrRawUrl !== 'string') return streamOrRawUrl;
+      if (streamOrRawUrl.startsWith('/api/audio') || streamOrRawUrl.includes('/api/audio?url=')) {
+        try {
+          const u = new URL(streamOrRawUrl, 'http://localhost');
+          return u.searchParams.get('url') || streamOrRawUrl;
+        } catch (e) {
+          return streamOrRawUrl;
+        }
+      }
       if (streamOrRawUrl.startsWith('/api/stream') || streamOrRawUrl.includes('/api/stream?url=')) {
         try {
           const u = new URL(streamOrRawUrl, 'http://localhost');
