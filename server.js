@@ -649,6 +649,7 @@ async function extractInstagramFast(targetUrl) {
     for (const b of bins) {
       try {
         const commonHeaders = [
+          '--extractor-args', 'instagram:app_id=936619743392459',
           '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
           '--add-header', 'X-IG-App-ID: 936619743392459',
           '--add-header', 'Accept-Language: en-US,en;q=0.9'

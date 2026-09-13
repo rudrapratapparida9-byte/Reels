@@ -93,6 +93,7 @@ def extract_with_ytdlp(url_or_shortcode):
             'extract_flat': False,
             'nocheckcertificate': True,
             'socket_timeout': 15,
+            'extractor_args': {'instagram': {'app_id': ['936619743392459']}},
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                 'X-IG-App-ID': '936619743392459',
@@ -127,6 +128,7 @@ def extract_with_ytdlp(url_or_shortcode):
                     '--no-playlist',
                     '--no-check-certificates',
                     '--socket-timeout', '15',
+                    '--extractor-args', 'instagram:app_id=936619743392459',
                     '--add-header', 'X-IG-App-ID: 936619743392459',
                     '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                     target_url
