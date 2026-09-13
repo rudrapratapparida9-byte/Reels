@@ -316,11 +316,11 @@ function parseYtdlpInfo(info, targetUrl) {
     const fUrl = String(f.url || '');
     if (!fUrl) continue;
 
-    const isAudioOnly = (fid.endsWith('a') || fid.includes('audio') || (acodec && acodec !== 'none')) && (!vcodec || vcodec === 'none');
-    const isProgressive = (vcodec && vcodec !== 'none' && acodec && acodec !== 'none');
+    const isAudioOnly = (fid.endsWith('a') || fid.includes('audio') || (acodec && acodec !== 'none' && acodec !== 'undefined')) && (!vcodec || vcodec === 'none' || vcodec === 'undefined');
+    const isProgressive = (vcodec && vcodec !== 'none' && vcodec !== 'undefined' && acodec && acodec !== 'none' && acodec !== 'undefined');
     const isH264 = vcodec.startsWith('avc') || vcodec.startsWith('h264');
-    const isDashVideo = fid.endsWith('v') || (vcodec && vcodec !== 'none' && (!acodec || acodec === 'none'));
-    const isVideo = (vcodec && vcodec !== 'none') || fid.endsWith('v') || isH264;
+    const isDashVideo = fid.endsWith('v') || (vcodec && vcodec !== 'none' && vcodec !== 'undefined' && (!acodec || acodec === 'none' || acodec === 'undefined'));
+    const isVideo = isDashVideo || isH264 || isProgressive || (vcodec && vcodec !== 'none' && vcodec !== 'undefined') || (!fid.endsWith('a') && !fid.includes('audio') && (acodec === 'none' || acodec === 'undefined' || !acodec));
 
     if (isAudioOnly) {
       if (!audioUrl) audioUrl = fUrl;

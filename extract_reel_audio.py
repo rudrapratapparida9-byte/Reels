@@ -159,11 +159,11 @@ def extract_with_ytdlp(url_or_shortcode):
         if not f_url:
             continue
 
-        is_audio_only = (fid.endswith('a') or 'audio' in fid or (acodec and acodec != 'none')) and (not vcodec or vcodec == 'none')
-        is_progressive = (vcodec and vcodec != 'none' and acodec and acodec != 'none')
+        is_audio_only = (fid.endswith('a') or 'audio' in fid or (acodec and acodec not in ('none', 'undefined', ''))) and (not vcodec or vcodec in ('none', 'undefined', ''))
+        is_progressive = (vcodec and vcodec not in ('none', 'undefined', '') and acodec and acodec not in ('none', 'undefined', ''))
         is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264')
-        is_dash_video = fid.endswith('v') or (vcodec and vcodec != 'none' and (not acodec or acodec == 'none'))
-        is_video = (vcodec and vcodec != 'none') or fid.endswith('v') or is_h264
+        is_dash_video = fid.endswith('v') or (vcodec and vcodec not in ('none', 'undefined', '') and (not acodec or acodec in ('none', 'undefined', '')))
+        is_video = is_dash_video or is_h264 or is_progressive or (vcodec and vcodec not in ('none', 'undefined', '')) or (not fid.endswith('a') and 'audio' not in fid and acodec in ('none', 'undefined', ''))
 
         if is_audio_only:
             if not audio_url:
