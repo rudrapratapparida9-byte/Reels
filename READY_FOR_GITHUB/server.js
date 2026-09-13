@@ -143,7 +143,7 @@ app.get('/api/debug-ytdlp', async (req, res) => {
   const targetUrl = cleanInstagramUrl(req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/');
   const pyBin = workingPythonBin || 'python';
   const ytdlpCommands = [
-    { name: './yt-dlp', bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', targetUrl] },
+    { name: './yt-dlp', bin: path.join(__dirname, 'yt-dlp'), args: ['-j', '--no-warnings', '--socket-timeout', '15', '--add-header', 'X-IG-App-ID: 936619743392459', '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', targetUrl] },
     { name: `${pyBin} extract`, bin: pyBin, args: [path.join(__dirname, 'extract_reel_audio.py'), targetUrl] }
   ];
 
@@ -568,7 +568,7 @@ async function extractInstagramFast(targetUrl) {
     try {
       const res = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
         cwd: __dirname,
-        timeout: 8000,
+        timeout: 25000,
         maxBuffer: 10 * 1024 * 1024,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
       });
@@ -592,8 +592,8 @@ async function extractInstagramFast(targetUrl) {
           '--add-header', 'X-IG-App-ID: 936619743392459',
           '--add-header', 'Accept-Language: en-US,en;q=0.9'
         ];
-        const args = ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '5', ...commonHeaders, cleanUrl];
-        const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 8000, maxBuffer: 10 * 1024 * 1024 });
+        const args = ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', ...commonHeaders, cleanUrl];
+        const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
         if (res && res.stdout) {
           const info = JSON.parse(res.stdout.trim());
           const parsed = parseYtdlpInfo(info, cleanUrl);

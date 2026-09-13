@@ -92,7 +92,7 @@ def extract_with_ytdlp(url_or_shortcode):
             'noplaylist': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            'socket_timeout': 5,
+            'socket_timeout': 15,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                 'X-IG-App-ID': '936619743392459',
@@ -126,12 +126,12 @@ def extract_with_ytdlp(url_or_shortcode):
                     '--no-warnings',
                     '--no-playlist',
                     '--no-check-certificates',
-                    '--socket-timeout', '5',
+                    '--socket-timeout', '15',
                     '--add-header', 'X-IG-App-ID: 936619743392459',
                     '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                     target_url
                 ]
-                out = subprocess.check_output(cmd, timeout=8, stderr=subprocess.DEVNULL)
+                out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
                 if out:
                     info = json.loads(out.decode('utf-8', errors='replace').strip())
                     if info:
