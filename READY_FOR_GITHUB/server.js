@@ -11,10 +11,16 @@ import os from 'os';
 import crypto from 'crypto';
 import ffmpegPath from 'ffmpeg-static';
 
-// Ensure ffmpeg executable has 755 execute permissions on Linux/Render
+// Ensure ffmpeg and yt-dlp executables have 755 execute permissions on Linux/Render
 try {
   if (ffmpegPath && fs.existsSync(ffmpegPath)) {
     fs.chmodSync(ffmpegPath, 0o755);
+  }
+} catch (e) {}
+try {
+  const ytdlpBin = path.join(__dirname, 'yt-dlp');
+  if (fs.existsSync(ytdlpBin)) {
+    fs.chmodSync(ytdlpBin, 0o755);
   }
 } catch (e) {}
 
@@ -365,7 +371,7 @@ function parseYtdlpInfo(info, targetUrl) {
   };
 }
 
-function fetchHttpBuffer(targetUrl, headers = {}, timeout = 2500) {
+function fetchHttpBuffer(targetUrl, headers = {}, timeout = 8000) {
   return new Promise((resolve) => {
     try {
       const parsed = new URL(targetUrl);
@@ -390,6 +396,9 @@ function fetchHttpBuffer(targetUrl, headers = {}, timeout = 2500) {
 
 function findMediaItemInObject(obj) {
   if (!obj || typeof obj !== 'object') return null;
+  if (obj.if_not_gated_logged_out && typeof obj.if_not_gated_logged_out === 'object') {
+    return obj.if_not_gated_logged_out;
+  }
   if (obj.video_versions || (obj.image_versions2 && (obj.user || obj.owner)) || obj.xdt_shortcode_media) {
     return obj;
   }
@@ -410,7 +419,7 @@ function findMediaItemInObject(obj) {
 function parseDashAudioFromManifest(manifest) {
   if (!manifest) return null;
   try {
-    const audioSetMatch = manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^"]*"[\s\S]*?<\/AdaptationSet>/i);
+    const audioSetMatch = manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^>]*>[\s\S]*?<\/AdaptationSet>/i);
     if (audioSetMatch) {
       const baseMatch = audioSetMatch[0].match(/<BaseURL>([^<]+)<\/BaseURL>/i);
       if (baseMatch) {
@@ -419,9 +428,9 @@ function parseDashAudioFromManifest(manifest) {
       }
     }
     const audioRepMatch = manifest.match(/<Representation[^>]*id="[^"]*audio[^"]*"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                          manifest.match(/<Representation[^>]*id="[^"]*a"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<Representation[^>]*id="[^"]*a"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
                           manifest.match(/<Representation[^>]*mimeType="audio[^"]*"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                          manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^"]*"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i);
+                          manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i);
     if (audioRepMatch) {
       let url = audioRepMatch[1].trim();
       return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
@@ -441,8 +450,9 @@ async function extractDirectNode(targetUrl) {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
+    'X-IG-App-ID': '936619743392459',
     'Sec-Fetch-Site': 'none'
-  }, 2000);
+  }, 8000);
 
   if (!res || !res.data) return null;
 
@@ -451,7 +461,7 @@ async function extractDirectNode(targetUrl) {
   let match;
   while ((match = scriptRegex.exec(html)) !== null) {
     const content = match[1];
-    if (content.includes('video_versions') || content.includes('image_versions2') || content.includes('xdt_shortcode_media')) {
+    if (content.includes('video_versions') || content.includes('image_versions2') || content.includes('xdt_shortcode_media') || content.includes('video_dash_manifest') || content.includes('xig_polaris_media')) {
       try {
         const parsed = JSON.parse(content);
         const item = findMediaItemInObject(parsed);
