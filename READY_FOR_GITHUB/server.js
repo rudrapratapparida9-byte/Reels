@@ -417,9 +417,9 @@ function findMediaItemInObject(obj) {
 }
 
 function parseDashAudioFromManifest(manifest) {
-  if (!manifest) return null;
+  if (!manifest || typeof manifest !== 'string') return null;
   try {
-    const audioSetMatch = manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^>]*>[\s\S]*?<\/AdaptationSet>/i);
+    const audioSetMatch = manifest.match(/<AdaptationSet[^>]*?(?:audio|contentType="audio"|mimeType="audio)[^>]*?>[\s\S]*?<\/AdaptationSet>/i);
     if (audioSetMatch) {
       const baseMatch = audioSetMatch[0].match(/<BaseURL>([^<]+)<\/BaseURL>/i);
       if (baseMatch) {
@@ -427,15 +427,39 @@ function parseDashAudioFromManifest(manifest) {
         return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
       }
     }
-    const audioRepMatch = manifest.match(/<Representation[^>]*id="[^"]*audio[^"]*"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                          manifest.match(/<Representation[^>]*id="[^"]*a"[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                          manifest.match(/<Representation[^>]*mimeType="audio[^"]*"[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                          manifest.match(/<AdaptationSet[^>]*(?:mimeType="audio|contentType="audio)[^>]*>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i);
+    const audioRepMatch = manifest.match(/<Representation[^>]*?id="[^"]*?a"[^>]*?>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<Representation[^>]*?mimeType="audio[^"]*"[^>]*?>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<Representation[^>]*?FBEncodingTag="[^"]*?audio[^"]*"[^>]*?>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
+                          manifest.match(/<AdaptationSet[^>]*?(?:mimeType="audio|contentType="audio)[^>]*?>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i);
     if (audioRepMatch) {
       let url = audioRepMatch[1].trim();
       return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
     }
   } catch (e) {}
+  return null;
+}
+
+function findDashAudioDeep(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (typeof obj.video_dash_manifest === 'string') {
+    const a = parseDashAudioFromManifest(obj.video_dash_manifest);
+    if (a) return a;
+  }
+  if (typeof obj.dash_manifest === 'string') {
+    const a = parseDashAudioFromManifest(obj.dash_manifest);
+    if (a) return a;
+  }
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const res = findDashAudioDeep(item);
+      if (res) return res;
+    }
+  } else {
+    for (const key of Object.keys(obj)) {
+      const res = findDashAudioDeep(obj[key]);
+      if (res) return res;
+    }
+  }
   return null;
 }
 
@@ -488,6 +512,12 @@ async function extractDirectNode(targetUrl) {
 
           if (media.video_dash_manifest) {
             dashAudioUrl = parseDashAudioFromManifest(media.video_dash_manifest);
+          }
+          if (!dashAudioUrl && media.dash_manifest) {
+            dashAudioUrl = parseDashAudioFromManifest(media.dash_manifest);
+          }
+          if (!dashAudioUrl) {
+            dashAudioUrl = findDashAudioDeep(parsed);
           }
 
           const clips = media.clips_metadata || {};
