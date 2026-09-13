@@ -715,9 +715,12 @@ app.get('/api/instagram', async (req, res) => {
   const targetUrl = cleanInstagramUrl(rawTargetUrl);
   
   // Check memory cache first (< 1ms instant response)
-  const cached = getCached(targetUrl);
-  if (cached) {
-    return res.json(cached);
+  const isNoCache = req.query.nocache === '1' || req.query.fresh === '1';
+  if (!isNoCache) {
+    const cached = getCached(targetUrl);
+    if (cached) {
+      return res.json(cached);
+    }
   }
 
   try {
