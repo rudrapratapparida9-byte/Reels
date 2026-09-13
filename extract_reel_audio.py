@@ -132,8 +132,8 @@ def extract_with_ytdlp(url_or_shortcode):
                 if not os.path.exists(b):
                     continue
             commands = [
-                [sys.executable, b] if (b.endswith('.py') or os.path.exists(b)) else [b],
-                [b]
+                [b],
+                [sys.executable, b] if (b.endswith('.py') or os.path.exists(b)) else [b]
             ]
             for c_prefix in commands:
                 try:
