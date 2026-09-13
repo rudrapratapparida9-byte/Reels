@@ -486,6 +486,11 @@ async function extractDirectNode(targetUrl) {
             dashAudioUrl = clipsAudioUrl;
           }
 
+          // If video reel has no extracted audio stream from manifest or clips metadata, yield to yt-dlp/python worker
+          if (videoUrl && !dashAudioUrl) {
+            return null;
+          }
+
           const finalAudioUrl = dashAudioUrl || progressiveUrl || videoUrl;
           const hasSeparateAudio = Boolean(dashAudioUrl && videoUrl && dashAudioUrl !== videoUrl);
 
@@ -547,7 +552,10 @@ async function extractInstagramFast(targetUrl) {
   const runDirectNode = async () => {
     try {
       const res = await extractDirectNode(cleanUrl);
-      if (res && res.success && (res.videoUrl || res.audioUrl || res.thumbnailUrl)) {
+      if (res && res.success && (res.videoUrl || res.thumbnailUrl)) {
+        if (res.is_video && (!res.audioUrl || res.audioUrl === res.videoUrl)) {
+          return null;
+        }
         return res;
       }
     } catch (e) {}
