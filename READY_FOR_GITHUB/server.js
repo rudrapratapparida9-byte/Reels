@@ -644,14 +644,16 @@ function safeJsonParseFromOutput(output) {
 // Optimized Multi-Tier Extractor Pipeline
 async function extractInstagramFast(targetUrl) {
   const cleanUrl = cleanInstagramUrl(targetUrl);
+  let fallbackCandidate = null;
 
   // 1. Native Direct Node extraction (< 500ms)
   try {
     const directRes = await extractDirectNode(cleanUrl);
     if (directRes && directRes.success && (directRes.videoUrl || directRes.thumbnailUrl)) {
-      if (!directRes.is_video || (directRes.audioUrl && directRes.audioUrl !== directRes.videoUrl)) {
+      if (!directRes.is_video || (directRes.audioUrl && directRes.audioUrl !== directRes.videoUrl) || directRes.hasSeparateAudio) {
         return directRes;
       }
+      fallbackCandidate = directRes;
     }
   } catch (e) {
     console.warn('Direct Node extraction notice:', e.message);
@@ -670,7 +672,10 @@ async function extractInstagramFast(targetUrl) {
     if (pyRes && pyRes.stdout) {
       const parsed = safeJsonParseFromOutput(pyRes.stdout);
       if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
-        return parsed;
+        if (!parsed.is_video || (parsed.audioUrl && parsed.audioUrl !== parsed.videoUrl) || parsed.hasSeparateAudio) {
+          return parsed;
+        }
+        if (!fallbackCandidate) fallbackCandidate = parsed;
       }
     }
   } catch (err) {
@@ -694,7 +699,10 @@ async function extractInstagramFast(targetUrl) {
         const info = safeJsonParseFromOutput(res.stdout);
         const parsed = parseYtdlpInfo(info, cleanUrl);
         if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
-          return parsed;
+          if (!parsed.is_video || (parsed.audioUrl && parsed.audioUrl !== parsed.videoUrl) || parsed.hasSeparateAudio) {
+            return parsed;
+          }
+          if (!fallbackCandidate) fallbackCandidate = parsed;
         }
       }
     } catch (err) {
@@ -702,7 +710,7 @@ async function extractInstagramFast(targetUrl) {
     }
   }
 
-  return null;
+  return fallbackCandidate;
 }
 
 // 1. API: Instagram Media Extraction
