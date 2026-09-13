@@ -238,6 +238,38 @@ def extract_with_ytdlp(url_or_shortcode):
         'duration': duration_text
     }
 
+def find_audio_deep(obj):
+    if not obj or not isinstance(obj, (dict, list)):
+        return None
+    if isinstance(obj, dict):
+        for k in ('progressive_download_url', 'fast_start_progressive_download_url', 'audio_bytestream_url', 'audio_src'):
+            val = obj.get(k)
+            if val and isinstance(val, str) and val.startswith('http'):
+                return val
+        orig = obj.get('original_sound_info')
+        if isinstance(orig, dict):
+            for k in ('progressive_download_url', 'fast_start_progressive_download_url', 'audio_bytestream_url'):
+                val = orig.get(k)
+                if val and isinstance(val, str) and val.startswith('http'):
+                    return val
+        music = obj.get('music_info')
+        if isinstance(music, dict):
+            meta = music.get('music_asset_info') if isinstance(music.get('music_asset_info'), dict) else music
+            for k in ('progressive_download_url', 'fast_start_progressive_download_url', 'audio_bytestream_url'):
+                val = meta.get(k)
+                if val and isinstance(val, str) and val.startswith('http'):
+                    return val
+        for v in obj.values():
+            res = find_audio_deep(v)
+            if res:
+                return res
+    elif isinstance(obj, list):
+        for item in obj:
+            res = find_audio_deep(item)
+            if res:
+                return res
+    return None
+
 def get_reel_audio_and_video(url_or_shortcode):
     """
     Extracts full video URL, thumbnail, and separate audio stream URL (with full sound).
@@ -245,7 +277,8 @@ def get_reel_audio_and_video(url_or_shortcode):
     # 1. Primary: yt-dlp extraction
     yt_data = extract_with_ytdlp(url_or_shortcode)
     if yt_data and yt_data.get('success') and (yt_data.get('videoUrl') or yt_data.get('audioUrl')):
-        return yt_data
+        if yt_data.get('hasSeparateAudio') or not yt_data.get('is_video') or (yt_data.get('audioUrl') and yt_data.get('audioUrl') != yt_data.get('videoUrl')):
+            return yt_data
 
     shortcode = extract_shortcode(url_or_shortcode)
     if not shortcode:
@@ -277,8 +310,8 @@ def get_reel_audio_and_video(url_or_shortcode):
                 progressive_url = video_url
             is_video = bool(post.is_video or video_url)
 
-            # Extract Dedicated Audio Stream from DASH Manifest XML
-            manifest = raw.get('video_dash_manifest') or ''
+            # Extract Dedicated Audio Stream from DASH Manifest XML or Deep Metadata
+            manifest = raw.get('video_dash_manifest') or raw.get('dash_manifest') or ''
             audio_stream_url = None
             if manifest:
                 try:
@@ -305,23 +338,23 @@ def get_reel_audio_and_video(url_or_shortcode):
                 except Exception:
                     pass
 
-            clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
-            music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
-            music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}
-            clips_audio = music_meta.get('progressive_download_url') or music_meta.get('fast_start_progressive_download_url')
-            if not audio_stream_url and clips_audio:
-                audio_stream_url = clips_audio
+            if not audio_stream_url:
+                audio_stream_url = find_audio_deep(raw)
 
-            final_audio_url = audio_stream_url or video_url
-            has_sep_audio = bool(audio_stream_url and video_url and audio_stream_url != video_url)
             clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
+            orig_sound = (clips.get('original_sound_info') if isinstance(clips.get('original_sound_info'), dict) else {}) or {}
             music_info = (clips.get('music_info') if isinstance(clips.get('music_info'), dict) else {}) or {}
             music_meta = (music_info.get('music_asset_info') if isinstance(music_info.get('music_asset_info'), dict) else {}) or {}
             owner = post.owner_username or 'instagram_creator'
             
+            final_audio_url = audio_stream_url or progressive_url or video_url
+            has_sep_audio = bool(audio_stream_url and video_url and audio_stream_url != video_url)
+
             if music_meta and music_meta.get('title'):
                 artist = music_meta.get('display_artist') or owner
                 audio_title = f"{artist} • {music_meta.get('title')} (320kbps MP3)"
+            elif orig_sound and orig_sound.get('original_audio_title'):
+                audio_title = f"@{owner} • {orig_sound.get('original_audio_title')} (320kbps MP3)"
             else:
                 audio_title = f"@{owner} • Original Audio (320kbps MP3)"
 

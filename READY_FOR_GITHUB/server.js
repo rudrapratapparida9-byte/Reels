@@ -471,6 +471,27 @@ function findDashAudioDeep(obj) {
     const a = parseDashAudioFromManifest(obj.dash_manifest);
     if (a) return a;
   }
+  const directKeys = ['progressive_download_url', 'fast_start_progressive_download_url', 'audio_bytestream_url', 'audio_src'];
+  for (const k of directKeys) {
+    if (typeof obj[k] === 'string' && obj[k].startsWith('http')) {
+      return obj[k];
+    }
+  }
+  if (obj.original_sound_info && typeof obj.original_sound_info === 'object') {
+    for (const k of directKeys) {
+      if (typeof obj.original_sound_info[k] === 'string' && obj.original_sound_info[k].startsWith('http')) {
+        return obj.original_sound_info[k];
+      }
+    }
+  }
+  if (obj.music_info && typeof obj.music_info === 'object') {
+    const meta = obj.music_info.music_asset_info || obj.music_info;
+    for (const k of directKeys) {
+      if (typeof meta[k] === 'string' && meta[k].startsWith('http')) {
+        return meta[k];
+      }
+    }
+  }
   if (Array.isArray(obj)) {
     for (const item of obj) {
       const res = findDashAudioDeep(item);
