@@ -459,6 +459,7 @@ async function extractDirectNode(targetUrl) {
   const html = res.data;
   const scriptRegex = /<script\s+type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi;
   let match;
+  let candidateResult = null;
   while ((match = scriptRegex.exec(html)) !== null) {
     const content = match[1];
     if (content.includes('video_versions') || content.includes('image_versions2') || content.includes('xdt_shortcode_media') || content.includes('video_dash_manifest') || content.includes('xig_polaris_media')) {
@@ -496,9 +497,8 @@ async function extractDirectNode(targetUrl) {
             dashAudioUrl = clipsAudioUrl;
           }
 
-          // If video reel has no extracted audio stream from manifest or clips metadata, yield to yt-dlp/python worker
-          if (videoUrl && !dashAudioUrl) {
-            return null;
+          if (!videoUrl && !media.image_versions2 && !media.display_uri && !media.display_url) {
+            continue;
           }
 
           const finalAudioUrl = dashAudioUrl || progressiveUrl || videoUrl;
@@ -526,7 +526,7 @@ async function extractDirectNode(targetUrl) {
           const audioTitle = musicInfo.title ? `${artist} • ${track} (320kbps MP3)` : `@${uploader} • Original Audio (320kbps MP3)`;
           const durationText = media.video_duration ? `${Math.round(media.video_duration)}s HD` : (videoUrl ? 'HD 1080p' : 'HD Lossless');
 
-          return {
+          const resultObj = {
             success: true,
             id: `insta_${shortcode}`,
             shortcode: shortcode,
@@ -548,9 +548,21 @@ async function extractDirectNode(targetUrl) {
             audioUrl: finalAudioUrl,
             duration: durationText
           };
+
+          if (dashAudioUrl || !videoUrl) {
+            return resultObj;
+          }
+
+          if (!candidateResult) {
+            candidateResult = resultObj;
+          }
         }
       } catch (e) {}
     }
+  }
+
+  if (candidateResult) {
+    return candidateResult;
   }
   return null;
 }
@@ -563,9 +575,6 @@ async function extractInstagramFast(targetUrl) {
     try {
       const res = await extractDirectNode(cleanUrl);
       if (res && res.success && (res.videoUrl || res.thumbnailUrl)) {
-        if (res.is_video && (!res.audioUrl || res.audioUrl === res.videoUrl)) {
-          return null;
-        }
         return res;
       }
     } catch (e) {}
