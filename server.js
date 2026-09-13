@@ -145,6 +145,28 @@ app.get('/api/clear-cache', (req, res) => {
   res.json({ success: true, message: `Cleared ${count} cached media items.` });
 });
 
+app.get('/api/debug-ffmpeg', async (req, res) => {
+  const results = {};
+  results.ffmpegPath = ffmpegPath;
+  results.exists = fs.existsSync(ffmpegPath);
+  try {
+    const stats = fs.statSync(ffmpegPath);
+    results.mode = stats.mode.toString(8);
+    results.size = stats.size;
+  } catch (e) {
+    results.statError = e.message;
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync(ffmpegPath, ['-version'], { timeout: 5000 });
+    results.version = stdout.split('\n')[0];
+    results.success = true;
+  } catch (e) {
+    results.execError = e.message;
+    results.stderr = e.stderr;
+  }
+  res.json(results);
+});
+
 app.get('/api/debug-ytdlp', async (req, res) => {
   const targetUrl = cleanInstagramUrl(req.query.url || 'https://www.instagram.com/reel/DdETKR9hOiG/');
   const pyBin = workingPythonBin || 'python3';
