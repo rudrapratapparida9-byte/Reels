@@ -11,6 +11,10 @@ import os from 'os';
 import crypto from 'crypto';
 import ffmpegPath from 'ffmpeg-static';
 
+const execFileAsync = promisify(execFile);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // Ensure ffmpeg and yt-dlp executables have 755 execute permissions on Linux/Render
 try {
   if (ffmpegPath && fs.existsSync(ffmpegPath)) {
@@ -23,10 +27,6 @@ try {
     fs.chmodSync(ytdlpBin, 0o755);
   }
 } catch (e) {}
-
-const execFileAsync = promisify(execFile);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
