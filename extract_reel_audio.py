@@ -131,26 +131,32 @@ def extract_with_ytdlp(url_or_shortcode):
             if b.startswith('.') or os.path.isabs(b):
                 if not os.path.exists(b):
                     continue
-            try:
-                cmd = [
-                    b,
-                    '-j',
-                    '--no-warnings',
-                    '--no-playlist',
-                    '--no-check-certificates',
-                    '--socket-timeout', '15',
-                    '--extractor-args', 'instagram:app_id=936619743392459',
-                    '--add-header', 'X-IG-App-ID: 936619743392459',
-                    '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                    target_url
-                ]
-                out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
-                if out:
-                    info = safe_json_loads(out.decode('utf-8', errors='replace'))
-                    if info:
-                        break
-            except Exception:
-                continue
+            commands = [
+                [sys.executable, b] if (b.endswith('.py') or os.path.exists(b)) else [b],
+                [b]
+            ]
+            for c_prefix in commands:
+                try:
+                    cmd = c_prefix + [
+                        '-j',
+                        '--no-warnings',
+                        '--no-playlist',
+                        '--no-check-certificates',
+                        '--socket-timeout', '15',
+                        '--extractor-args', 'instagram:app_id=936619743392459',
+                        '--add-header', 'X-IG-App-ID: 936619743392459',
+                        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                        target_url
+                    ]
+                    out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
+                    if out:
+                        info = safe_json_loads(out.decode('utf-8', errors='replace'))
+                        if info:
+                            break
+                except Exception:
+                    continue
+            if info:
+                break
 
     if not info:
         return None

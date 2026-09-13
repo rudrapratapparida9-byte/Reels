@@ -684,8 +684,17 @@ async function extractInstagramFast(targetUrl) {
 
   // 3. Standalone yt-dlp binary worker
   const ytdlpBin = path.join(__dirname, 'yt-dlp');
-  const bins = fs.existsSync(ytdlpBin) ? [ytdlpBin, 'yt-dlp'] : ['yt-dlp'];
-  for (const b of bins) {
+  const commandsToTry = [];
+  if (fs.existsSync(ytdlpBin)) {
+    commandsToTry.push({ cmd: pyBin, prefixArgs: [ytdlpBin] });
+    commandsToTry.push({ cmd: ytdlpBin, prefixArgs: [] });
+  }
+  commandsToTry.push({ cmd: 'yt-dlp', prefixArgs: [] });
+  if (process.platform === 'win32') {
+    commandsToTry.push({ cmd: 'yt-dlp.exe', prefixArgs: [] });
+  }
+
+  for (const { cmd, prefixArgs } of commandsToTry) {
     try {
       const commonHeaders = [
         '--extractor-args', 'instagram:app_id=936619743392459',
@@ -693,8 +702,8 @@ async function extractInstagramFast(targetUrl) {
         '--add-header', 'X-IG-App-ID: 936619743392459',
         '--add-header', 'Accept-Language: en-US,en;q=0.9'
       ];
-      const args = ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', ...commonHeaders, cleanUrl];
-      const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
+      const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', ...commonHeaders, cleanUrl];
+      const res = await execFileAsync(cmd, fullArgs, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
       if (res && res.stdout) {
         const info = safeJsonParseFromOutput(res.stdout);
         const parsed = parseYtdlpInfo(info, cleanUrl);
