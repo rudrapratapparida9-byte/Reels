@@ -594,18 +594,11 @@ async function extractDirectNode(targetUrl) {
           if (dashAudioUrl || !videoUrl) {
             return resultObj;
           }
-
-          if (!candidateResult) {
-            candidateResult = resultObj;
-          }
         }
       } catch (e) {}
     }
   }
 
-  if (candidateResult) {
-    return candidateResult;
-  }
   return null;
 }
 
@@ -617,6 +610,9 @@ async function extractInstagramFast(targetUrl) {
     try {
       const res = await extractDirectNode(cleanUrl);
       if (res && res.success && (res.videoUrl || res.thumbnailUrl)) {
+        if (res.is_video && (!res.audioUrl || res.audioUrl === res.videoUrl)) {
+          return null;
+        }
         return res;
       }
     } catch (e) {}
