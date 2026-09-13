@@ -624,6 +624,23 @@ async function extractDirectNode(targetUrl) {
   return null;
 }
 
+function safeJsonParseFromOutput(output) {
+  if (!output || typeof output !== 'string') return null;
+  const trimmed = output.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch (e) {}
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const jsonStr = trimmed.substring(firstBrace, lastBrace + 1);
+      return JSON.parse(jsonStr);
+    } catch (e) {}
+  }
+  return null;
+}
+
 // Ultra-Fast Parallel Race Extractor (Executes multiple engines concurrently and returns the fastest winner)
 async function extractInstagramFast(targetUrl) {
   const cleanUrl = cleanInstagramUrl(targetUrl);
@@ -652,7 +669,7 @@ async function extractInstagramFast(targetUrl) {
         env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
       });
       if (res && res.stdout) {
-        const parsed = JSON.parse(res.stdout.trim());
+        const parsed = safeJsonParseFromOutput(res.stdout);
         if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
           return parsed;
         }
@@ -675,7 +692,7 @@ async function extractInstagramFast(targetUrl) {
         const args = ['-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', ...commonHeaders, cleanUrl];
         const res = await execFileAsync(b, args, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
         if (res && res.stdout) {
-          const info = JSON.parse(res.stdout.trim());
+          const info = safeJsonParseFromOutput(res.stdout);
           const parsed = parseYtdlpInfo(info, cleanUrl);
           if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
             return parsed;
