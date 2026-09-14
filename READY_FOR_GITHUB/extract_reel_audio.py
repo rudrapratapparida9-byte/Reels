@@ -99,79 +99,70 @@ def extract_with_ytdlp(url_or_shortcode):
     else:
         target_url = f"https://www.instagram.com/reel/{url_or_shortcode}/"
 
-    # 1. Try python module directly (fastest, no subprocess overhead)
-    headers_dict = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Sec-Ch-Ua': '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-        'X-IG-App-ID': '936619743392459'
-    }
-    try:
-        import yt_dlp
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'skip_download': True,
-            'noplaylist': True,
-            'extract_flat': False,
-            'nocheckcertificate': True,
-            'socket_timeout': 15,
-            'http_headers': headers_dict,
-            'extractor_args': {'instagram': {'app_id': ['936619743392459']}}
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(target_url, download=False)
-    except Exception:
-        info = None
+    import subprocess
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    ytdlp_local = os.path.join(base_dir, 'yt-dlp')
+    target_bin = ytdlp_local if os.path.exists(ytdlp_local) else 'yt-dlp'
+    
+    bins_to_try = [
+        [sys.executable or 'python3', '-m', 'yt_dlp', '--impersonate', 'chrome'],
+        [target_bin, '--impersonate', 'chrome'],
+        [sys.executable or 'python3', '-m', 'yt_dlp'],
+        [target_bin]
+    ]
+    for prefix in bins_to_try:
+        try:
+            cmd = prefix + [
+                '-j',
+                '--no-warnings',
+                '--no-playlist',
+                '--no-check-certificates',
+                '--socket-timeout', '15',
+                '--extractor-args', 'instagram:app_id=936619743392459',
+                '--add-header', 'X-IG-App-ID: 936619743392459',
+                '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                '--add-header', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                '--add-header', 'Accept-Language: en-US,en;q=0.9',
+                '--add-header', 'Sec-Fetch-Site: none',
+                '--add-header', 'Sec-Fetch-Mode: navigate',
+                '--add-header', 'Sec-Fetch-Dest: document',
+                '--add-header', 'Sec-Fetch-User: ?1',
+                '--add-header', 'Upgrade-Insecure-Requests: 1',
+                target_url
+            ]
+            out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
+            if out:
+                info = safe_json_loads(out.decode('utf-8', errors='replace'))
+                if info and info.get('formats'):
+                    break
+        except Exception:
+            continue
 
-    # 2. Try standalone yt-dlp binary or python -m yt_dlp --impersonate chrome via subprocess
+    # Fallback to python module directly if subprocess did not return
     if not info:
-        import subprocess
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        ytdlp_local = os.path.join(base_dir, 'yt-dlp')
-        target_bin = ytdlp_local if os.path.exists(ytdlp_local) else 'yt-dlp'
-        
-        bins_to_try = [
-            [sys.executable or 'python3', '-m', 'yt_dlp', '--impersonate', 'chrome'],
-            [sys.executable or 'python3', '-m', 'yt_dlp'],
-            [target_bin, '--impersonate', 'chrome'],
-            [target_bin]
-        ]
-        for prefix in bins_to_try:
-            try:
-                cmd = prefix + [
-                    '-j',
-                    '--no-warnings',
-                    '--no-playlist',
-                    '--no-check-certificates',
-                    '--socket-timeout', '15',
-                    '--extractor-args', 'instagram:app_id=936619743392459',
-                    '--add-header', 'X-IG-App-ID: 936619743392459',
-                    '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                    '--add-header', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    '--add-header', 'Accept-Language: en-US,en;q=0.9',
-                    '--add-header', 'Sec-Fetch-Site: none',
-                    '--add-header', 'Sec-Fetch-Mode: navigate',
-                    '--add-header', 'Sec-Fetch-Dest: document',
-                    '--add-header', 'Sec-Fetch-User: ?1',
-                    '--add-header', 'Upgrade-Insecure-Requests: 1',
-                    target_url
-                ]
-                out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
-                if out:
-                    info = safe_json_loads(out.decode('utf-8', errors='replace'))
-                    if info:
-                        break
-            except Exception:
-                continue
+        try:
+            import yt_dlp
+            headers_dict = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'X-IG-App-ID': '936619743392459'
+            }
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'skip_download': True,
+                'noplaylist': True,
+                'extract_flat': False,
+                'nocheckcertificate': True,
+                'socket_timeout': 15,
+                'http_headers': headers_dict,
+                'extractor_args': {'instagram': {'app_id': ['936619743392459']}}
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(target_url, download=False)
+        except Exception:
+            info = None
 
     if not info:
         return None
