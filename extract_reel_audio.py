@@ -370,18 +370,16 @@ def get_reel_audio_and_video(url_or_shortcode):
     """
     Extracts full video URL, thumbnail, and separate audio stream URL (with full sound).
     """
+    shortcode = extract_shortcode(url_or_shortcode)
+    
     # 1. Primary: yt-dlp extraction
     yt_data = extract_with_ytdlp(url_or_shortcode)
-    if yt_data and yt_data.get('success') and (yt_data.get('videoUrl') or yt_data.get('audioUrl')):
+    if yt_data and yt_data.get('success') and yt_data.get('hasSeparateAudio'):
         return yt_data
 
-    shortcode = extract_shortcode(url_or_shortcode)
-    if not shortcode:
-        return yt_data or {'success': False, 'error': 'Could not find a valid shortcode in URL'}
-
-    # 2. Secondary: Instaloader fallback
+    # 2. Secondary: Instaloader fallback / DASH manifest enricher
     loader = get_instaloader()
-    if loader:
+    if loader and shortcode:
         try:
             import instaloader
             post = instaloader.Post.from_shortcode(loader.context, shortcode)
@@ -411,6 +409,12 @@ def get_reel_audio_and_video(url_or_shortcode):
 
             if not audio_stream_url:
                 audio_stream_url = find_audio_deep(raw)
+
+            # If yt_data exists, enrich it with the separate audio stream from Instaloader manifest!
+            if audio_stream_url and yt_data and yt_data.get('success'):
+                yt_data['audioUrl'] = audio_stream_url
+                yt_data['hasSeparateAudio'] = bool(yt_data.get('videoUrl') and audio_stream_url != yt_data.get('videoUrl'))
+                return yt_data
 
             clips = (raw.get('clips_metadata') if isinstance(raw.get('clips_metadata'), dict) else {}) or {}
             orig_sound = (clips.get('original_sound_info') if isinstance(clips.get('original_sound_info'), dict) else {}) or {}
