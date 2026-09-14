@@ -188,12 +188,21 @@ def extract_with_ytdlp(url_or_shortcode):
         vcodec = str(f.get('vcodec', '') or '').lower()
         acodec = str(f.get('acodec', '') or '').lower()
         f_url = str(f.get('url', ''))
+        res_str = str(f.get('resolution', '') or '').lower()
+        a_ext = str(f.get('audio_ext', '') or '').lower()
         if not f_url:
             continue
 
-        is_audio_only = (fid.endswith('a') or 'audio' in fid or (acodec and acodec not in ('none', 'undefined', ''))) and (not vcodec or vcodec in ('none', 'undefined', ''))
+        is_audio_only = (
+            fid.endswith('a') or 
+            'audio' in fid or 
+            res_str == 'audio only' or 
+            a_ext in ('m4a', 'mp3', 'aac') or 
+            (acodec and acodec not in ('none', 'undefined', ''))
+        ) and (not vcodec or vcodec in ('none', 'undefined', ''))
+
         is_progressive = (vcodec and vcodec not in ('none', 'undefined', '') and acodec and acodec not in ('none', 'undefined', ''))
-        is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264')
+        is_h264 = vcodec.startswith('avc') or vcodec.startswith('h264') or 'xpv_progressive' in f_url
         is_dash_video = fid.endswith('v') or (vcodec and vcodec not in ('none', 'undefined', '') and (not acodec or acodec in ('none', 'undefined', '')))
         is_video = is_dash_video or is_h264 or is_progressive or (vcodec and vcodec not in ('none', 'undefined', '')) or (not fid.endswith('a') and 'audio' not in fid and acodec in ('none', 'undefined', ''))
 
@@ -203,16 +212,16 @@ def extract_with_ytdlp(url_or_shortcode):
         elif is_progressive:
             if not progressive_url:
                 progressive_url = f_url
-        elif is_dash_video:
-            if not dash_video_url:
-                dash_video_url = f_url
         elif is_h264:
             if not h264_video_url:
                 h264_video_url = f_url
+        elif is_dash_video:
+            if not dash_video_url:
+                dash_video_url = f_url
         elif is_video and not generic_video_url:
             generic_video_url = f_url
 
-    video_url = progressive_url or info.get('url') or h264_video_url or dash_video_url or generic_video_url
+    video_url = progressive_url or h264_video_url or generic_video_url or dash_video_url or info.get('url')
     final_audio_url = audio_url or (progressive_url if is_progressive else None) or video_url
     video_only_url = dash_video_url or h264_video_url or generic_video_url or progressive_url or video_url
     has_separate_audio = bool(audio_url and video_url and audio_url != video_url)

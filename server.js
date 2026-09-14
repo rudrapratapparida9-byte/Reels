@@ -187,8 +187,10 @@ app.get('/api/debug-ytdlp', async (req, res) => {
         time: Date.now() - start,
         success: true,
         keys: parsed ? Object.keys(parsed) : null,
+        hasSeparateAudio: parsed ? parsed.hasSeparateAudio : null,
         videoUrl: parsed ? (parsed.videoUrl || parsed.url) : null,
-        audioUrl: parsed ? parsed.audioUrl : null
+        audioUrl: parsed ? parsed.audioUrl : null,
+        formats: parsed && parsed.formats ? parsed.formats.map(f => ({ id: f.format_id, vcodec: f.vcodec, acodec: f.acodec, url: f.url ? f.url.substring(0, 60) : null })) : null
       });
     } catch (err) {
       results.push({ name: cmd.name, success: false, error: err.message, stderr: err.stderr });
@@ -336,11 +338,20 @@ function parseYtdlpInfo(info, targetUrl) {
     const vcodec = String(f.vcodec || '').toLowerCase();
     const acodec = String(f.acodec || '').toLowerCase();
     const fUrl = String(f.url || '');
+    const resStr = String(f.resolution || '').toLowerCase();
+    const aExt = String(f.audio_ext || '').toLowerCase();
     if (!fUrl) continue;
 
-    const isAudioOnly = (fid.endsWith('a') || fid.includes('audio') || (acodec && acodec !== 'none' && acodec !== 'undefined')) && (!vcodec || vcodec === 'none' || vcodec === 'undefined');
+    const isAudioOnly = (
+      fid.endsWith('a') || 
+      fid.includes('audio') || 
+      resStr === 'audio only' || 
+      aExt === 'm4a' || aExt === 'mp3' || aExt === 'aac' || 
+      (acodec && acodec !== 'none' && acodec !== 'undefined')
+    ) && (!vcodec || vcodec === 'none' || vcodec === 'undefined');
+
     const isProgressive = (vcodec && vcodec !== 'none' && vcodec !== 'undefined' && acodec && acodec !== 'none' && acodec !== 'undefined');
-    const isH264 = vcodec.startsWith('avc') || vcodec.startsWith('h264');
+    const isH264 = vcodec.startsWith('avc') || vcodec.startsWith('h264') || fUrl.includes('xpv_progressive');
     const isDashVideo = fid.endsWith('v') || (vcodec && vcodec !== 'none' && vcodec !== 'undefined' && (!acodec || acodec === 'none' || acodec === 'undefined'));
     const isVideo = isDashVideo || isH264 || isProgressive || (vcodec && vcodec !== 'none' && vcodec !== 'undefined') || (!fid.endsWith('a') && !fid.includes('audio') && (acodec === 'none' || acodec === 'undefined' || !acodec));
 
@@ -348,16 +359,16 @@ function parseYtdlpInfo(info, targetUrl) {
       if (!audioUrl) audioUrl = fUrl;
     } else if (isProgressive) {
       if (!progressiveUrl) progressiveUrl = fUrl;
-    } else if (isDashVideo) {
-      if (!dashVideoUrl) dashVideoUrl = fUrl;
     } else if (isH264) {
       if (!h264VideoUrl) h264VideoUrl = fUrl;
+    } else if (isDashVideo) {
+      if (!dashVideoUrl) dashVideoUrl = fUrl;
     } else if (isVideo && !genericVideoUrl) {
       genericVideoUrl = fUrl;
     }
   }
 
-  const videoUrl = progressiveUrl || info.url || h264VideoUrl || dashVideoUrl || genericVideoUrl;
+  const videoUrl = progressiveUrl || h264VideoUrl || genericVideoUrl || dashVideoUrl || info.url;
   const finalAudioUrl = audioUrl || (progressiveUrl ? progressiveUrl : (info.url && !info.vcodec ? info.url : videoUrl));
   const videoOnlyUrl = dashVideoUrl || h264VideoUrl || genericVideoUrl || progressiveUrl || videoUrl;
   const hasSeparateAudio = Boolean(audioUrl && videoUrl && audioUrl !== videoUrl);
