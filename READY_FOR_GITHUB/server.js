@@ -713,7 +713,8 @@ async function extractInstagramFast(targetUrl) {
     const runDirectNode = async () => {
       try {
         const res = await extractDirectNode(cleanUrl);
-        if (res && res.success && (res.videoUrl || res.thumbnailUrl)) {
+        // Only return early from direct node if dedicated audio is confirmed or for photo posts
+        if (res && res.success && (!res.is_video || res.hasSeparateAudio)) {
           return res;
         }
       } catch (e) {}
