@@ -109,7 +109,7 @@ def extract_with_ytdlp(url_or_shortcode):
             'noplaylist': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            'socket_timeout': 8,
+            'socket_timeout': 12,
             'extractor_args': {'instagram': {'app_id': ['936619743392459']}}
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -131,13 +131,13 @@ def extract_with_ytdlp(url_or_shortcode):
                 '--no-warnings',
                 '--no-playlist',
                 '--no-check-certificates',
-                '--socket-timeout', '6',
+                '--socket-timeout', '12',
                 '--extractor-args', 'instagram:app_id=936619743392459',
                 '--add-header', 'X-IG-App-ID: 936619743392459',
                 '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                 target_url
             ]
-            out = subprocess.check_output(cmd, timeout=7, stderr=subprocess.DEVNULL)
+            out = subprocess.check_output(cmd, timeout=15, stderr=subprocess.DEVNULL)
             if out:
                 info = safe_json_loads(out.decode('utf-8', errors='replace'))
         except Exception:

@@ -724,7 +724,7 @@ async function extractInstagramFast(targetUrl) {
       try {
         const pyRes = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
           cwd: __dirname,
-          timeout: 8000,
+          timeout: 25000,
           maxBuffer: 10 * 1024 * 1024,
           env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
         });
@@ -759,8 +759,8 @@ async function extractInstagramFast(targetUrl) {
             '--add-header', 'X-IG-App-ID: 936619743392459',
             '--add-header', 'Accept-Language: en-US,en;q=0.9'
           ];
-          const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '6', ...commonHeaders, cleanUrl];
-          const res = await execFileAsync(cmd, fullArgs, { cwd: __dirname, timeout: 8000, maxBuffer: 10 * 1024 * 1024 });
+          const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '12', ...commonHeaders, cleanUrl];
+          const res = await execFileAsync(cmd, fullArgs, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
           if (res && res.stdout) {
             const info = safeJsonParseFromOutput(res.stdout);
             const parsed = parseYtdlpInfo(info, cleanUrl);
