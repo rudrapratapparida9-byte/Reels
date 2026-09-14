@@ -1488,12 +1488,12 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-// Built-in Auto Keep-Alive for Render Free Tier (pings every 8 minutes)
+// Built-in Auto Keep-Alive for Render Free Tier (pings every 3.5 minutes to prevent sleep)
 function startKeepAlive() {
   const targetUrl = process.env.RENDER_EXTERNAL_URL || 'https://reels-1-nvfo.onrender.com';
-  const PING_INTERVAL = 8 * 60 * 1000; // 8 minutes
+  const PING_INTERVAL = 3.5 * 60 * 1000; // 3.5 minutes (Render sleep threshold is 15 minutes)
 
-  setInterval(() => {
+  const doPing = () => {
     try {
       const pingUrl = `${targetUrl.replace(/\/+$/, '')}/api/health`;
       const client = pingUrl.startsWith('https') ? https : http;
@@ -1513,9 +1513,13 @@ function startKeepAlive() {
     } catch (e) {
       console.log(`[Keep-Alive] Error:`, e.message);
     }
-  }, PING_INTERVAL);
+  };
 
-  console.log(`[Keep-Alive] Background worker active for ${targetUrl}`);
+  // Immediate initial ping + regular 3.5 minute interval
+  setTimeout(doPing, 5000);
+  setInterval(doPing, PING_INTERVAL);
+
+  console.log(`[Keep-Alive] Active every 3.5 min for ${targetUrl}`);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
