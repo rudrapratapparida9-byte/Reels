@@ -758,9 +758,15 @@ async function extractInstagramFast(targetUrl) {
             '--extractor-args', 'instagram:app_id=936619743392459',
             '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             '--add-header', 'X-IG-App-ID: 936619743392459',
-            '--add-header', 'Accept-Language: en-US,en;q=0.9'
+            '--add-header', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            '--add-header', 'Accept-Language: en-US,en;q=0.9',
+            '--add-header', 'Sec-Fetch-Site: none',
+            '--add-header', 'Sec-Fetch-Mode: navigate',
+            '--add-header', 'Sec-Fetch-Dest: document',
+            '--add-header', 'Sec-Fetch-User: ?1',
+            '--add-header', 'Upgrade-Insecure-Requests: 1'
           ];
-          const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '12', ...commonHeaders, cleanUrl];
+          const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', ...commonHeaders, cleanUrl];
           const res = await execFileAsync(cmd, fullArgs, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
           if (res && res.stdout) {
             const info = safeJsonParseFromOutput(res.stdout);

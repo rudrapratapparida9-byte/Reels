@@ -100,6 +100,20 @@ def extract_with_ytdlp(url_or_shortcode):
         target_url = f"https://www.instagram.com/reel/{url_or_shortcode}/"
 
     # 1. Try python module directly (fastest, no subprocess overhead)
+    headers_dict = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Sec-Ch-Ua': '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+        'X-IG-App-ID': '936619743392459'
+    }
     try:
         import yt_dlp
         ydl_opts = {
@@ -109,7 +123,8 @@ def extract_with_ytdlp(url_or_shortcode):
             'noplaylist': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            'socket_timeout': 12,
+            'socket_timeout': 15,
+            'http_headers': headers_dict,
             'extractor_args': {'instagram': {'app_id': ['936619743392459']}}
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -131,13 +146,20 @@ def extract_with_ytdlp(url_or_shortcode):
                 '--no-warnings',
                 '--no-playlist',
                 '--no-check-certificates',
-                '--socket-timeout', '12',
+                '--socket-timeout', '15',
                 '--extractor-args', 'instagram:app_id=936619743392459',
                 '--add-header', 'X-IG-App-ID: 936619743392459',
                 '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                '--add-header', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                '--add-header', 'Accept-Language: en-US,en;q=0.9',
+                '--add-header', 'Sec-Fetch-Site: none',
+                '--add-header', 'Sec-Fetch-Mode: navigate',
+                '--add-header', 'Sec-Fetch-Dest: document',
+                '--add-header', 'Sec-Fetch-User: ?1',
+                '--add-header', 'Upgrade-Insecure-Requests: 1',
                 target_url
             ]
-            out = subprocess.check_output(cmd, timeout=15, stderr=subprocess.DEVNULL)
+            out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
             if out:
                 info = safe_json_loads(out.decode('utf-8', errors='replace'))
         except Exception:
