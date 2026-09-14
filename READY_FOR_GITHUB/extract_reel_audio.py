@@ -274,43 +274,55 @@ def find_audio_deep(obj):
 def parse_dash_manifest_audio(manifest_str):
     if not manifest_str or not isinstance(manifest_str, str):
         return None
+    
+    # 1. ElementTree parsing
+    root = None
     try:
-        clean = manifest_str.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'").replace('&apos;', "'")
-        root = ET.fromstring(clean)
-        # 1. Look for audio representations in any namespace
+        root = ET.fromstring(manifest_str)
+    except Exception:
+        try:
+            escaped = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;)', '&amp;', manifest_str)
+            root = ET.fromstring(escaped)
+        except Exception:
+            root = None
+
+    if root is not None:
         for elem in root.iter():
             tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
-            if tag == 'Representation':
-                rep_id = str(elem.get('id', '')).lower()
-                mime = str(elem.get('mimeType', '')).lower()
-                encoding = str(elem.get('FBEncodingTag', '')).lower()
-                if rep_id.endswith('a') or 'audio' in mime or 'audio' in rep_id or 'audio' in encoding:
-                    for child in elem:
-                        c_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-                        if c_tag == 'BaseURL' and child.text and child.text.strip().startswith('http'):
-                            return child.text.strip()
-            elif tag == 'AdaptationSet':
-                mime = str(elem.get('mimeType', '') or elem.get('contentType', '')).lower()
-                if 'audio' in mime:
-                    for child in elem.iter():
-                        c_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-                        if c_tag == 'BaseURL' and child.text and child.text.strip().startswith('http'):
-                            return child.text.strip()
-    except Exception:
-        pass
+            rep_id = str(elem.get('id', '')).lower()
+            mime = str(elem.get('mimeType', '')).lower()
+            content_type = str(elem.get('contentType', '')).lower()
+            encoding = str(elem.get('FBEncodingTag', '')).lower()
+            codecs = str(elem.get('codecs', '')).lower()
 
-    # Regex fallback
+            is_audio = (
+                mime.startswith('audio') or 
+                content_type == 'audio' or 
+                rep_id.endswith('a') or 
+                'audio' in rep_id or 
+                'audio' in encoding or 
+                'mp4a' in codecs
+            )
+
+            if is_audio:
+                for child in elem.iter():
+                    c_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                    if c_tag == 'BaseURL' and child.text and child.text.strip().startswith('http'):
+                        return child.text.strip().replace('&amp;', '&')
+
+    # 2. Regex fallback
     try:
-        import re
         patterns = [
-            r'<Representation[^>]*?(?:mimeType="audio[^"]*"|id="[^"]*?(?:a|_a|_audio|dash_audio|audio_dashinit)"|FBEncodingTag="[^"]*?audio[^"]*")[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+)<\/BaseURL>',
-            r'<AdaptationSet[^>]*?(?:mimeType="audio[^"]*"|contentType="audio[^"]*"|audio)[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+)<\/BaseURL>',
-            r'<BaseURL[^>]*>([^<]+(?:audio|dashinit|mp4a)[^<]*)<\/BaseURL>'
+            r'<Representation[^>]*?(?:mimeType="audio[^"]*"|id="[^"]*?a"|codecs="mp4a[^"]*"|FBEncodingTag="[^"]*?audio[^"]*")[^>]*?>[\s\S]*?<BaseURL[^>]*>([\s\S]*?)<\/BaseURL>',
+            r'<AdaptationSet[^>]*?(?:contentType="audio"|mimeType="audio[^"]*")[^>]*?>[\s\S]*?<BaseURL[^>]*>([\s\S]*?)<\/BaseURL>',
+            r'<BaseURL[^>]*>([\s\S]*?(?:m78|audio|dashinit|heaac|mp4a)[\s\S]*?)<\/BaseURL>'
         ]
         for p in patterns:
             m = re.search(p, manifest_str, re.IGNORECASE)
-            if m and m.group(1).strip().startswith('http'):
-                return m.group(1).strip().replace('&amp;', '&')
+            if m and m.group(1):
+                url = m.group(1).strip().replace('&amp;', '&').replace('\n', '').replace('\r', '').replace(' ', '')
+                if url.startswith('http'):
+                    return url
     except Exception:
         pass
     return None

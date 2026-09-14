@@ -445,9 +445,9 @@ function parseDashAudioFromManifest(manifest) {
     
     // Match audio representation or audio adaptation set
     const audioRepMatches = [
-      /<Representation[^>]*?(?:mimeType="audio[^"]*"|id="[^"]*?(?:a|_a|_audio|dash_audio|audio_dashinit)"|FBEncodingTag="[^"]*?audio[^"]*")[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+)<\/BaseURL>/i,
-      /<AdaptationSet[^>]*?(?:mimeType="audio[^"]*"|contentType="audio[^"]*"|audio)[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+)<\/BaseURL>/i,
-      /<Representation[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+(?:audio|dashinit|mp4a)[^<]*)<\/BaseURL>/i
+      /<Representation[^>]*?(?:mimeType="audio[^"]*"|id="[^"]*?(?:a|_a|_audio|dash_audio|audio_dashinit)"|codecs="mp4a[^"]*"|FBEncodingTag="[^"]*?audio[^"]*")[^>]*?>[\s\S]*?<BaseURL[^>]*>([\s\S]*?)<\/BaseURL>/i,
+      /<AdaptationSet[^>]*?(?:mimeType="audio[^"]*"|contentType="audio[^"]*"|audio)[^>]*?>[\s\S]*?<BaseURL[^>]*>([\s\S]*?)<\/BaseURL>/i,
+      /<Representation[^>]*?>[\s\S]*?<BaseURL[^>]*>([\s\S]*?(?:audio|dashinit|mp4a|m78)[\s\S]*?)<\/BaseURL>/i
     ];
 
     for (const regex of audioRepMatches) {
