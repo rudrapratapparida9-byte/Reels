@@ -782,8 +782,8 @@ async function extractInstagramFast(targetUrl) {
       const handleCandidate = (candidate) => {
         if (resolved) return;
         if (candidate && candidate.success && (candidate.videoUrl || candidate.thumbnailUrl)) {
-          // If candidate is complete with separate audio OR is a direct video/photo, return immediately!
-          if (candidate.hasSeparateAudio || !candidate.is_video || (candidate.audioUrl && candidate.audioUrl !== candidate.videoUrl)) {
+          // If candidate is complete with separate audio track, return immediately!
+          if (candidate.hasSeparateAudio || (candidate.audioUrl && candidate.videoUrl && candidate.audioUrl !== candidate.videoUrl)) {
             resolved = true;
             return resolve(candidate);
           }
@@ -791,20 +791,22 @@ async function extractInstagramFast(targetUrl) {
         }
         pending--;
         if (pending <= 0) {
-          if (candidates.length > 0) {
+          const bestCandidate = candidates.find(c => c.hasSeparateAudio || (c.audioUrl && c.videoUrl && c.audioUrl !== c.videoUrl)) || candidates[0];
+          if (bestCandidate && (bestCandidate.hasSeparateAudio || bestCandidate.thumbnailUrl)) {
             resolved = true;
-            resolve(candidates[0]);
+            resolve(bestCandidate);
           } else {
             // Fall back to Tier 3 yt-dlp binary
             runYtdlpBinary().then(bRes => {
               if (!resolved) {
                 resolved = true;
-                resolve(bRes || (candidates[0] || null));
+                const finalChoice = bRes || bestCandidate || null;
+                resolve(finalChoice);
               }
             }).catch(() => {
               if (!resolved) {
                 resolved = true;
-                resolve(candidates[0] || null);
+                resolve(bestCandidate || null);
               }
             });
           }
