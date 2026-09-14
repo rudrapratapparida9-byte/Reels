@@ -132,38 +132,46 @@ def extract_with_ytdlp(url_or_shortcode):
     except Exception:
         info = None
 
-    # 2. Try standalone yt-dlp binary via subprocess if module didn't return
+    # 2. Try standalone yt-dlp binary or python -m yt_dlp --impersonate chrome via subprocess
     if not info:
         import subprocess
         base_dir = os.path.dirname(os.path.abspath(__file__))
         ytdlp_local = os.path.join(base_dir, 'yt-dlp')
         target_bin = ytdlp_local if os.path.exists(ytdlp_local) else 'yt-dlp'
         
-        try:
-            cmd = [
-                target_bin,
-                '-j',
-                '--no-warnings',
-                '--no-playlist',
-                '--no-check-certificates',
-                '--socket-timeout', '15',
-                '--extractor-args', 'instagram:app_id=936619743392459',
-                '--add-header', 'X-IG-App-ID: 936619743392459',
-                '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                '--add-header', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                '--add-header', 'Accept-Language: en-US,en;q=0.9',
-                '--add-header', 'Sec-Fetch-Site: none',
-                '--add-header', 'Sec-Fetch-Mode: navigate',
-                '--add-header', 'Sec-Fetch-Dest: document',
-                '--add-header', 'Sec-Fetch-User: ?1',
-                '--add-header', 'Upgrade-Insecure-Requests: 1',
-                target_url
-            ]
-            out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
-            if out:
-                info = safe_json_loads(out.decode('utf-8', errors='replace'))
-        except Exception:
-            info = None
+        bins_to_try = [
+            [sys.executable or 'python3', '-m', 'yt_dlp', '--impersonate', 'chrome'],
+            [sys.executable or 'python3', '-m', 'yt_dlp'],
+            [target_bin, '--impersonate', 'chrome'],
+            [target_bin]
+        ]
+        for prefix in bins_to_try:
+            try:
+                cmd = prefix + [
+                    '-j',
+                    '--no-warnings',
+                    '--no-playlist',
+                    '--no-check-certificates',
+                    '--socket-timeout', '15',
+                    '--extractor-args', 'instagram:app_id=936619743392459',
+                    '--add-header', 'X-IG-App-ID: 936619743392459',
+                    '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                    '--add-header', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    '--add-header', 'Accept-Language: en-US,en;q=0.9',
+                    '--add-header', 'Sec-Fetch-Site: none',
+                    '--add-header', 'Sec-Fetch-Mode: navigate',
+                    '--add-header', 'Sec-Fetch-Dest: document',
+                    '--add-header', 'Sec-Fetch-User: ?1',
+                    '--add-header', 'Upgrade-Insecure-Requests: 1',
+                    target_url
+                ]
+                out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
+                if out:
+                    info = safe_json_loads(out.decode('utf-8', errors='replace'))
+                    if info:
+                        break
+            except Exception:
+                continue
 
     if not info:
         return None

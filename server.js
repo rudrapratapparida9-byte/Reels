@@ -742,13 +742,17 @@ async function extractInstagramFast(targetUrl) {
     const runYtdlpBinary = async () => {
       const ytdlpBin = path.join(__dirname, 'yt-dlp');
       const commandsToTry = [];
+      commandsToTry.push({ cmd: pyBin, prefixArgs: ['-m', 'yt_dlp', '--impersonate', 'chrome'] });
+      commandsToTry.push({ cmd: pyBin, prefixArgs: ['-m', 'yt_dlp'] });
       if (fs.existsSync(ytdlpBin)) {
         try { fs.chmodSync(ytdlpBin, 0o755); } catch (e) {}
+        commandsToTry.push({ cmd: ytdlpBin, prefixArgs: ['--impersonate', 'chrome'] });
         commandsToTry.push({ cmd: ytdlpBin, prefixArgs: [] });
       }
-      commandsToTry.push({ cmd: pyBin, prefixArgs: ['-m', 'yt_dlp'] });
+      commandsToTry.push({ cmd: 'yt-dlp', prefixArgs: ['--impersonate', 'chrome'] });
       commandsToTry.push({ cmd: 'yt-dlp', prefixArgs: [] });
       if (process.platform === 'win32') {
+        commandsToTry.push({ cmd: 'yt-dlp.exe', prefixArgs: ['--impersonate', 'chrome'] });
         commandsToTry.push({ cmd: 'yt-dlp.exe', prefixArgs: [] });
       }
 
