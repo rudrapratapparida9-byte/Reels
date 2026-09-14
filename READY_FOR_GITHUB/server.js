@@ -556,7 +556,7 @@ async function extractDirectNode(targetUrl) {
         'Upgrade-Insecure-Requests': '1',
         'X-IG-App-ID': '936619743392459'
       },
-      signal: AbortSignal.timeout(8000)
+      signal: AbortSignal.timeout(5000)
     });
     if (!response.ok) return null;
     html = await response.text();
@@ -666,12 +666,15 @@ async function extractDirectNode(targetUrl) {
           if (dashAudioUrl || !videoUrl) {
             return resultObj;
           }
+          if (!candidateResult) {
+            candidateResult = resultObj;
+          }
         }
       } catch (e) {}
     }
   }
 
-  return null;
+  return candidateResult;
 }
 
 function safeJsonParseFromOutput(output) {
@@ -706,7 +709,7 @@ async function extractInstagramFast(targetUrl) {
     const pyBin = workingPythonBin || (process.platform === 'win32' ? 'python' : 'python3');
     const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
 
-    // Launch Direct Node (< 2500ms) and Python Worker (< 3000ms) in parallel
+    // Launch Direct Node (< 1500ms) and Python Worker (< 3000ms) in parallel
     const runDirectNode = async () => {
       try {
         const res = await extractDirectNode(cleanUrl);
@@ -721,7 +724,7 @@ async function extractInstagramFast(targetUrl) {
       try {
         const pyRes = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
           cwd: __dirname,
-          timeout: 15000,
+          timeout: 8000,
           maxBuffer: 10 * 1024 * 1024,
           env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
         });
@@ -741,7 +744,6 @@ async function extractInstagramFast(targetUrl) {
       if (fs.existsSync(ytdlpBin)) {
         try { fs.chmodSync(ytdlpBin, 0o755); } catch (e) {}
         commandsToTry.push({ cmd: ytdlpBin, prefixArgs: [] });
-        commandsToTry.push({ cmd: pyBin, prefixArgs: [ytdlpBin] });
       }
       commandsToTry.push({ cmd: 'yt-dlp', prefixArgs: [] });
       if (process.platform === 'win32') {
@@ -756,8 +758,8 @@ async function extractInstagramFast(targetUrl) {
             '--add-header', 'X-IG-App-ID: 936619743392459',
             '--add-header', 'Accept-Language: en-US,en;q=0.9'
           ];
-          const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '10', ...commonHeaders, cleanUrl];
-          const res = await execFileAsync(cmd, fullArgs, { cwd: __dirname, timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
+          const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '6', ...commonHeaders, cleanUrl];
+          const res = await execFileAsync(cmd, fullArgs, { cwd: __dirname, timeout: 8000, maxBuffer: 10 * 1024 * 1024 });
           if (res && res.stdout) {
             const info = safeJsonParseFromOutput(res.stdout);
             const parsed = parseYtdlpInfo(info, cleanUrl);
@@ -779,8 +781,8 @@ async function extractInstagramFast(targetUrl) {
       const handleCandidate = (candidate) => {
         if (resolved) return;
         if (candidate && candidate.success && (candidate.videoUrl || candidate.thumbnailUrl)) {
-          // If candidate is complete (audio + video), return immediately!
-          if (!candidate.is_video || candidate.hasSeparateAudio || (candidate.audioUrl && candidate.audioUrl !== candidate.videoUrl)) {
+          // If candidate is complete with separate audio OR is a direct video/photo, return immediately!
+          if (candidate.hasSeparateAudio || !candidate.is_video || (candidate.audioUrl && candidate.audioUrl !== candidate.videoUrl)) {
             resolved = true;
             return resolve(candidate);
           }

@@ -121,46 +121,27 @@ def extract_with_ytdlp(url_or_shortcode):
     if not info:
         import subprocess
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        binaries = [
-            os.path.join(base_dir, 'yt-dlp'),
-            'yt-dlp',
-            './yt-dlp',
-            'yt-dlp.exe'
-        ]
-        for b in binaries:
-            if b.startswith('.') or os.path.isabs(b):
-                if not os.path.exists(b):
-                    continue
-                try:
-                    os.chmod(b, 0o755)
-                except Exception:
-                    pass
-            commands = [
-                [b],
-                [sys.executable, b] if (b.endswith('.py') or os.path.exists(b)) else [b]
+        ytdlp_local = os.path.join(base_dir, 'yt-dlp')
+        target_bin = ytdlp_local if os.path.exists(ytdlp_local) else 'yt-dlp'
+        
+        try:
+            cmd = [
+                target_bin,
+                '-j',
+                '--no-warnings',
+                '--no-playlist',
+                '--no-check-certificates',
+                '--socket-timeout', '6',
+                '--extractor-args', 'instagram:app_id=936619743392459',
+                '--add-header', 'X-IG-App-ID: 936619743392459',
+                '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                target_url
             ]
-            for c_prefix in commands:
-                try:
-                    cmd = c_prefix + [
-                        '-j',
-                        '--no-warnings',
-                        '--no-playlist',
-                        '--no-check-certificates',
-                        '--socket-timeout', '15',
-                        '--extractor-args', 'instagram:app_id=936619743392459',
-                        '--add-header', 'X-IG-App-ID: 936619743392459',
-                        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-                        target_url
-                    ]
-                    out = subprocess.check_output(cmd, timeout=20, stderr=subprocess.DEVNULL)
-                    if out:
-                        info = safe_json_loads(out.decode('utf-8', errors='replace'))
-                        if info:
-                            break
-                except Exception:
-                    continue
-            if info:
-                break
+            out = subprocess.check_output(cmd, timeout=7, stderr=subprocess.DEVNULL)
+            if out:
+                info = safe_json_loads(out.decode('utf-8', errors='replace'))
+        except Exception:
+            info = None
 
     if not info:
         return None
