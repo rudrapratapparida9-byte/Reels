@@ -725,7 +725,7 @@ async function extractInstagramFast(targetUrl) {
       try {
         const pyRes = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
           cwd: __dirname,
-          timeout: 25000,
+          timeout: 40000,
           maxBuffer: 10 * 1024 * 1024,
           env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
         });
