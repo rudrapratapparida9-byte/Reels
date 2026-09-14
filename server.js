@@ -441,21 +441,35 @@ function findMediaItemInObject(obj) {
 function parseDashAudioFromManifest(manifest) {
   if (!manifest || typeof manifest !== 'string') return null;
   try {
-    const audioSetMatch = manifest.match(/<AdaptationSet[^>]*?(?:audio|contentType="audio"|mimeType="audio)[^>]*?>[\s\S]*?<\/AdaptationSet>/i);
-    if (audioSetMatch) {
-      const baseMatch = audioSetMatch[0].match(/<BaseURL>([^<]+)<\/BaseURL>/i);
-      if (baseMatch) {
-        let url = baseMatch[1].trim();
-        return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+    const cleanManifest = manifest.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+    
+    // Match audio representation or audio adaptation set
+    const audioRepMatches = [
+      /<Representation[^>]*?(?:mimeType="audio[^"]*"|id="[^"]*?(?:a|_a|_audio|dash_audio|audio_dashinit)"|FBEncodingTag="[^"]*?audio[^"]*")[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+)<\/BaseURL>/i,
+      /<AdaptationSet[^>]*?(?:mimeType="audio[^"]*"|contentType="audio[^"]*"|audio)[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+)<\/BaseURL>/i,
+      /<Representation[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+(?:audio|dashinit|mp4a)[^<]*)<\/BaseURL>/i
+    ];
+
+    for (const regex of audioRepMatches) {
+      const match = cleanManifest.match(regex);
+      if (match && match[1]) {
+        let url = match[1].trim();
+        if (url.startsWith('http')) return url;
       }
     }
-    const audioRepMatch = manifest.match(/<Representation[^>]*?id="[^"]*?a"[^>]*?>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                          manifest.match(/<Representation[^>]*?mimeType="audio[^"]*"[^>]*?>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                          manifest.match(/<Representation[^>]*?FBEncodingTag="[^"]*?audio[^"]*"[^>]*?>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i) ||
-                          manifest.match(/<AdaptationSet[^>]*?(?:mimeType="audio|contentType="audio)[^>]*?>[\s\S]*?<BaseURL>([^<]+)<\/BaseURL>/i);
-    if (audioRepMatch) {
-      let url = audioRepMatch[1].trim();
-      return url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+
+    // Direct BaseURL containing audio indicators
+    const allBaseUrls = cleanManifest.match(/<BaseURL[^>]*>([^<]+)<\/BaseURL>/gi);
+    if (allBaseUrls) {
+      for (const tag of allBaseUrls) {
+        const uMatch = tag.match(/<BaseURL[^>]*>([^<]+)<\/BaseURL>/i);
+        if (uMatch && uMatch[1]) {
+          const u = uMatch[1].trim();
+          if (u.startsWith('http') && (u.includes('audio') || u.includes('_a.') || u.includes('dash_audio') || u.includes('m78') || u.includes('heaac') || u.includes('mp4a'))) {
+            return u;
+          }
+        }
+      }
     }
   } catch (e) {}
   return null;
@@ -471,24 +485,39 @@ function findDashAudioDeep(obj) {
     const a = parseDashAudioFromManifest(obj.dash_manifest);
     if (a) return a;
   }
-  const directKeys = ['progressive_download_url', 'fast_start_progressive_download_url', 'audio_bytestream_url', 'audio_src'];
+  const directKeys = [
+    'progressive_download_url', 
+    'fast_start_progressive_download_url', 
+    'audio_bytestream_url', 
+    'audio_src',
+    'audio_url',
+    'playable_url'
+  ];
   for (const k of directKeys) {
     if (typeof obj[k] === 'string' && obj[k].startsWith('http')) {
-      return obj[k];
+      return obj[k].replace(/&amp;/g, '&');
     }
   }
   if (obj.original_sound_info && typeof obj.original_sound_info === 'object') {
     for (const k of directKeys) {
       if (typeof obj.original_sound_info[k] === 'string' && obj.original_sound_info[k].startsWith('http')) {
-        return obj.original_sound_info[k];
+        return obj.original_sound_info[k].replace(/&amp;/g, '&');
       }
     }
   }
   if (obj.music_info && typeof obj.music_info === 'object') {
-    const meta = obj.music_info.music_asset_info || obj.music_info;
+    const meta = obj.music_info.music_asset_info || obj.music_info.music_consumption_info || obj.music_info;
     for (const k of directKeys) {
       if (typeof meta[k] === 'string' && meta[k].startsWith('http')) {
-        return meta[k];
+        return meta[k].replace(/&amp;/g, '&');
+      }
+    }
+  }
+  if (obj.music_metadata && typeof obj.music_metadata === 'object') {
+    const meta = obj.music_metadata.music_info || obj.music_metadata.original_sound_info || obj.music_metadata;
+    for (const k of directKeys) {
+      if (typeof meta[k] === 'string' && meta[k].startsWith('http')) {
+        return meta[k].replace(/&amp;/g, '&');
       }
     }
   }
@@ -884,6 +913,12 @@ app.get('/api/instagram', async (req, res) => {
 
 async function downloadToTempFile(targetUrl, destPath) {
   let cleanTarget = targetUrl;
+  if (cleanTarget.includes('&amp;')) {
+    cleanTarget = cleanTarget.replace(/&amp;/g, '&');
+  }
+  if (cleanTarget.includes('%26') || cleanTarget.includes('%3D')) {
+    cleanTarget = cleanTarget.replace(/%26/g, '&').replace(/%3D/g, '=');
+  }
   try {
     const res = await fetch(cleanTarget, {
       headers: {
@@ -918,14 +953,6 @@ app.get('/api/merge', async (req, res) => {
   if (Array.isArray(rawVideo)) rawVideo = rawVideo[0];
   if (Array.isArray(rawAudio)) rawAudio = rawAudio[0];
 
-  if (req.originalUrl) {
-    try {
-      const fullUrlObj = new URL(req.originalUrl, 'http://localhost');
-      if (fullUrlObj.searchParams.has('videoUrl')) rawVideo = fullUrlObj.searchParams.get('videoUrl');
-      if (fullUrlObj.searchParams.has('audioUrl')) rawAudio = fullUrlObj.searchParams.get('audioUrl');
-    } catch (e) {}
-  }
-
   let videoUrl = rawVideo ? String(rawVideo).trim() : '';
   let audioUrl = rawAudio ? String(rawAudio).trim() : '';
   const rawFilename = req.query.filename;
@@ -939,13 +966,20 @@ app.get('/api/merge', async (req, res) => {
 
   function cleanUrl(u) {
     if (!u) return '';
-    if (u.includes('/api/stream?url=')) {
+    let resU = u;
+    if (resU.includes('/api/stream?url=')) {
       try {
-        const parsed = new URL(u, `http://localhost:${PORT}`);
-        return parsed.searchParams.get('url') || u;
+        const parsed = new URL(resU, `http://localhost:${PORT}`);
+        resU = parsed.searchParams.get('url') || resU;
       } catch (e) {}
     }
-    return u;
+    if (resU.includes('&amp;')) {
+      resU = resU.replace(/&amp;/g, '&');
+    }
+    if (resU.includes('%26') || resU.includes('%3D')) {
+      resU = resU.replace(/%26/g, '&').replace(/%3D/g, '=');
+    }
+    return resU;
   }
 
   videoUrl = cleanUrl(videoUrl);
@@ -994,7 +1028,25 @@ app.get('/api/merge', async (req, res) => {
       tempOutput
     ];
 
-    await execFileAsync(ffmpegBin, args, { timeout: 45000 });
+    try {
+      await execFileAsync(ffmpegBin, args, { timeout: 45000 });
+    } catch (ffErr) {
+      // Fallback: try without explicit stream index mapping if audio track layout differs
+      const fallbackArgs = [
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-y',
+        '-i', tempVideo,
+        '-i', tempAudio,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '256k',
+        '-shortest',
+        '-movflags', '+faststart',
+        tempOutput
+      ];
+      await execFileAsync(ffmpegBin, fallbackArgs, { timeout: 45000 });
+    }
 
     if (!fs.existsSync(tempOutput)) {
       throw new Error('FFmpeg failed to create merged video file');
@@ -1019,7 +1071,7 @@ app.get('/api/merge', async (req, res) => {
     console.error('Video + Audio merge error:', err.message);
     cleanup();
     if (!res.headersSent) {
-      res.redirect(`/api/stream?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}&inline=${isInline}&download=${isDownload ? 1 : 0}`);
+      res.status(500).json({ success: false, error: `Media merge error: ${err.message}` });
     }
   }
 });

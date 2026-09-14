@@ -131,6 +131,10 @@ def extract_with_ytdlp(url_or_shortcode):
             if b.startswith('.') or os.path.isabs(b):
                 if not os.path.exists(b):
                     continue
+                try:
+                    os.chmod(b, 0o755)
+                except Exception:
+                    pass
             commands = [
                 [b],
                 [sys.executable, b] if (b.endswith('.py') or os.path.exists(b)) else [b]
@@ -241,24 +245,40 @@ def extract_with_ytdlp(url_or_shortcode):
 def find_audio_deep(obj):
     if not obj or not isinstance(obj, (dict, list)):
         return None
+    direct_keys = (
+        'progressive_download_url',
+        'fast_start_progressive_download_url',
+        'audio_bytestream_url',
+        'audio_src',
+        'audio_url',
+        'playable_url'
+    )
     if isinstance(obj, dict):
-        for k in ('progressive_download_url', 'fast_start_progressive_download_url', 'audio_bytestream_url', 'audio_src'):
+        for k in direct_keys:
             val = obj.get(k)
             if val and isinstance(val, str) and val.startswith('http'):
-                return val
+                return val.replace('&amp;', '&')
         orig = obj.get('original_sound_info')
         if isinstance(orig, dict):
-            for k in ('progressive_download_url', 'fast_start_progressive_download_url', 'audio_bytestream_url'):
+            for k in direct_keys:
                 val = orig.get(k)
                 if val and isinstance(val, str) and val.startswith('http'):
-                    return val
+                    return val.replace('&amp;', '&')
         music = obj.get('music_info')
         if isinstance(music, dict):
-            meta = music.get('music_asset_info') if isinstance(music.get('music_asset_info'), dict) else music
-            for k in ('progressive_download_url', 'fast_start_progressive_download_url', 'audio_bytestream_url'):
+            meta = music.get('music_asset_info') if isinstance(music.get('music_asset_info'), dict) else (music.get('music_consumption_info') if isinstance(music.get('music_consumption_info'), dict) else music)
+            for k in direct_keys:
                 val = meta.get(k)
                 if val and isinstance(val, str) and val.startswith('http'):
-                    return val
+                    return val.replace('&amp;', '&')
+        music_meta = obj.get('music_metadata')
+        if isinstance(music_meta, dict):
+            meta = music_meta.get('music_info') or music_meta.get('original_sound_info') or music_meta
+            if isinstance(meta, dict):
+                for k in direct_keys:
+                    val = meta.get(k)
+                    if val and isinstance(val, str) and val.startswith('http'):
+                        return val.replace('&amp;', '&')
         for v in obj.values():
             res = find_audio_deep(v)
             if res:
@@ -268,6 +288,50 @@ def find_audio_deep(obj):
             res = find_audio_deep(item)
             if res:
                 return res
+    return None
+
+def parse_dash_manifest_audio(manifest_str):
+    if not manifest_str or not isinstance(manifest_str, str):
+        return None
+    try:
+        clean = manifest_str.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'").replace('&apos;', "'")
+        root = ET.fromstring(clean)
+        # 1. Look for audio representations in any namespace
+        for elem in root.iter():
+            tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+            if tag == 'Representation':
+                rep_id = str(elem.get('id', '')).lower()
+                mime = str(elem.get('mimeType', '')).lower()
+                encoding = str(elem.get('FBEncodingTag', '')).lower()
+                if rep_id.endswith('a') or 'audio' in mime or 'audio' in rep_id or 'audio' in encoding:
+                    for child in elem:
+                        c_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                        if c_tag == 'BaseURL' and child.text and child.text.strip().startswith('http'):
+                            return child.text.strip()
+            elif tag == 'AdaptationSet':
+                mime = str(elem.get('mimeType', '') or elem.get('contentType', '')).lower()
+                if 'audio' in mime:
+                    for child in elem.iter():
+                        c_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                        if c_tag == 'BaseURL' and child.text and child.text.strip().startswith('http'):
+                            return child.text.strip()
+    except Exception:
+        pass
+
+    # Regex fallback
+    try:
+        import re
+        patterns = [
+            r'<Representation[^>]*?(?:mimeType="audio[^"]*"|id="[^"]*?(?:a|_a|_audio|dash_audio|audio_dashinit)"|FBEncodingTag="[^"]*?audio[^"]*")[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+)<\/BaseURL>',
+            r'<AdaptationSet[^>]*?(?:mimeType="audio[^"]*"|contentType="audio[^"]*"|audio)[^>]*?>[\s\S]*?<BaseURL[^>]*>([^<]+)<\/BaseURL>',
+            r'<BaseURL[^>]*>([^<]+(?:audio|dashinit|mp4a)[^<]*)<\/BaseURL>'
+        ]
+        for p in patterns:
+            m = re.search(p, manifest_str, re.IGNORECASE)
+            if m and m.group(1).strip().startswith('http'):
+                return m.group(1).strip().replace('&amp;', '&')
+    except Exception:
+        pass
     return None
 
 def get_reel_audio_and_video(url_or_shortcode):
@@ -312,31 +376,7 @@ def get_reel_audio_and_video(url_or_shortcode):
 
             # Extract Dedicated Audio Stream from DASH Manifest XML or Deep Metadata
             manifest = raw.get('video_dash_manifest') or raw.get('dash_manifest') or ''
-            audio_stream_url = None
-            if manifest:
-                try:
-                    root = ET.fromstring(manifest)
-                    for rep in root.iter('{urn:mpeg:dash:schema:mpd:2011}Representation'):
-                        rep_id = str(rep.get('id', '')).lower()
-                        mime = str(rep.get('mimeType', '')).lower()
-                        if rep_id.endswith('a') or 'audio' in mime or 'audio' in rep_id:
-                            base = rep.find('{urn:mpeg:dash:schema:mpd:2011}BaseURL')
-                            if base is not None and base.text:
-                                audio_stream_url = base.text.strip()
-                                break
-                    if not audio_stream_url:
-                        for adapt in root.iter('{urn:mpeg:dash:schema:mpd:2011}AdaptationSet'):
-                            mime = str(adapt.get('mimeType', '') or adapt.get('contentType', '')).lower()
-                            if 'audio' in mime:
-                                for rep in adapt.iter('{urn:mpeg:dash:schema:mpd:2011}Representation'):
-                                    base = rep.find('{urn:mpeg:dash:schema:mpd:2011}BaseURL')
-                                    if base is not None and base.text:
-                                        audio_stream_url = base.text.strip()
-                                        break
-                                if audio_stream_url:
-                                    break
-                except Exception:
-                    pass
+            audio_stream_url = parse_dash_manifest_audio(manifest) if manifest else None
 
             if not audio_stream_url:
                 audio_stream_url = find_audio_deep(raw)
