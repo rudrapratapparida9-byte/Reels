@@ -794,48 +794,57 @@ async function extractInstagramFast(targetUrl) {
       return null;
     };
 
-    // Race Tier 1 and Tier 2 simultaneously for minimum response latency
+    // Race Tier 1 (Direct Node < 800ms) and Tier 2 (Python Worker) simultaneously
     const results = await new Promise((resolve) => {
       let resolved = false;
       let pending = 2;
-      let candidates = [];
+      let bestCandidate = null;
 
-      const handleCandidate = (candidate) => {
+      const finishWith = (cand) => {
         if (resolved) return;
-        if (candidate && candidate.success && (candidate.videoUrl || candidate.thumbnailUrl)) {
-          // If candidate is complete with separate audio track, return immediately!
-          if (candidate.hasSeparateAudio || (candidate.audioUrl && candidate.videoUrl && candidate.audioUrl !== candidate.videoUrl)) {
-            resolved = true;
-            return resolve(candidate);
-          }
-          candidates.push(candidate);
+        if (cand && cand.success && (cand.videoUrl || cand.thumbnailUrl)) {
+          resolved = true;
+          return resolve(cand);
+        }
+        if (cand && !bestCandidate) {
+          bestCandidate = cand;
         }
         pending--;
         if (pending <= 0) {
-          const bestCandidate = candidates.find(c => c.hasSeparateAudio || (c.audioUrl && c.videoUrl && c.audioUrl !== c.videoUrl)) || candidates[0];
-          if (bestCandidate && (bestCandidate.hasSeparateAudio || bestCandidate.thumbnailUrl)) {
+          if (bestCandidate) {
             resolved = true;
-            resolve(bestCandidate);
-          } else {
-            // Fall back to Tier 3 yt-dlp binary
-            runYtdlpBinary().then(bRes => {
-              if (!resolved) {
-                resolved = true;
-                const finalChoice = bRes || bestCandidate || null;
-                resolve(finalChoice);
-              }
-            }).catch(() => {
-              if (!resolved) {
-                resolved = true;
-                resolve(bestCandidate || null);
-              }
-            });
+            return resolve(bestCandidate);
           }
+          // Fall back to Tier 3 yt-dlp binary
+          runYtdlpBinary().then((bRes) => {
+            if (!resolved) {
+              resolved = true;
+              resolve(bRes || null);
+            }
+          }).catch(() => {
+            if (!resolved) {
+              resolved = true;
+              resolve(null);
+            }
+          });
         }
       };
 
-      runDirectNode().then(handleCandidate).catch(() => handleCandidate(null));
-      runPythonWorker().then(handleCandidate).catch(() => handleCandidate(null));
+      runDirectNode().then((cand) => {
+        if (cand && cand.success && (cand.videoUrl || cand.thumbnailUrl)) {
+          finishWith(cand);
+        } else {
+          finishWith(null);
+        }
+      }).catch(() => finishWith(null));
+
+      runPythonWorker().then((cand) => {
+        if (cand && cand.success && (cand.videoUrl || cand.thumbnailUrl)) {
+          finishWith(cand);
+        } else {
+          finishWith(null);
+        }
+      }).catch(() => finishWith(null));
     });
 
     return results;

@@ -365,7 +365,7 @@ def get_reel_audio_and_video(url_or_shortcode):
     
     # 1. Primary: yt-dlp extraction
     yt_data = extract_with_ytdlp(url_or_shortcode)
-    if yt_data and yt_data.get('success') and yt_data.get('hasSeparateAudio'):
+    if yt_data and yt_data.get('success') and (yt_data.get('videoUrl') or yt_data.get('thumbnailUrl')):
         return yt_data
 
     # 2. Secondary: Instaloader fallback / DASH manifest enricher
