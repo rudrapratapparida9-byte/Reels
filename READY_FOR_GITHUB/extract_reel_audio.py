@@ -322,8 +322,7 @@ def get_reel_audio_and_video(url_or_shortcode):
     # 1. Primary: yt-dlp extraction
     yt_data = extract_with_ytdlp(url_or_shortcode)
     if yt_data and yt_data.get('success') and (yt_data.get('videoUrl') or yt_data.get('audioUrl')):
-        if yt_data.get('hasSeparateAudio') or not yt_data.get('is_video') or (yt_data.get('audioUrl') and yt_data.get('audioUrl') != yt_data.get('videoUrl')):
-            return yt_data
+        return yt_data
 
     shortcode = extract_shortcode(url_or_shortcode)
     if not shortcode:
