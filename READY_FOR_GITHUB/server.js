@@ -691,86 +691,137 @@ function safeJsonParseFromOutput(output) {
   return null;
 }
 
-// Optimized Multi-Tier Extractor Pipeline
+// Fast In-Memory In-Flight Request Deduplication
+const inFlightExtractions = new Map();
+
+// Optimized Ultra-Fast Parallel Multi-Tier Extractor Pipeline
 async function extractInstagramFast(targetUrl) {
   const cleanUrl = cleanInstagramUrl(targetUrl);
-  let fallbackCandidate = null;
 
-  // 1. Native Direct Node extraction (< 500ms)
-  try {
-    const directRes = await extractDirectNode(cleanUrl);
-    if (directRes && directRes.success && (directRes.videoUrl || directRes.thumbnailUrl)) {
-      if (!directRes.is_video || (directRes.audioUrl && directRes.audioUrl !== directRes.videoUrl) || directRes.hasSeparateAudio) {
-        return directRes;
-      }
-      fallbackCandidate = directRes;
-    }
-  } catch (e) {
-    console.warn('Direct Node extraction notice:', e.message);
+  if (inFlightExtractions.has(cleanUrl)) {
+    return inFlightExtractions.get(cleanUrl);
   }
 
-  // 2. Python worker extraction (yt-dlp module with DASH audio resolution)
-  const pyBin = workingPythonBin || (process.platform === 'win32' ? 'python' : 'python3');
-  const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
-  try {
-    const pyRes = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
-      cwd: __dirname,
-      timeout: 25000,
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-    });
-    if (pyRes && pyRes.stdout) {
-      const parsed = safeJsonParseFromOutput(pyRes.stdout);
-      if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
-        if (!parsed.is_video || (parsed.audioUrl && parsed.audioUrl !== parsed.videoUrl) || parsed.hasSeparateAudio) {
-          return parsed;
+  const extractionPromise = (async () => {
+    const pyBin = workingPythonBin || (process.platform === 'win32' ? 'python' : 'python3');
+    const scriptPath = path.join(__dirname, 'extract_reel_audio.py');
+
+    // Launch Direct Node (< 2500ms) and Python Worker (< 3000ms) in parallel
+    const runDirectNode = async () => {
+      try {
+        const res = await extractDirectNode(cleanUrl);
+        if (res && res.success && (res.videoUrl || res.thumbnailUrl)) {
+          return res;
         }
-        if (!fallbackCandidate) fallbackCandidate = parsed;
-      }
-    }
-  } catch (err) {
-    console.warn('Python worker notice:', err.message);
-  }
+      } catch (e) {}
+      return null;
+    };
 
-  // 3. Standalone yt-dlp binary worker
-  const ytdlpBin = path.join(__dirname, 'yt-dlp');
-  const commandsToTry = [];
-  if (fs.existsSync(ytdlpBin)) {
-    try { fs.chmodSync(ytdlpBin, 0o755); } catch (e) {}
-    commandsToTry.push({ cmd: ytdlpBin, prefixArgs: [] });
-    commandsToTry.push({ cmd: pyBin, prefixArgs: [ytdlpBin] });
-  }
-  commandsToTry.push({ cmd: 'yt-dlp', prefixArgs: [] });
-  if (process.platform === 'win32') {
-    commandsToTry.push({ cmd: 'yt-dlp.exe', prefixArgs: [] });
-  }
-
-  for (const { cmd, prefixArgs } of commandsToTry) {
-    try {
-      const commonHeaders = [
-        '--extractor-args', 'instagram:app_id=936619743392459',
-        '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        '--add-header', 'X-IG-App-ID: 936619743392459',
-        '--add-header', 'Accept-Language: en-US,en;q=0.9'
-      ];
-      const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '15', ...commonHeaders, cleanUrl];
-      const res = await execFileAsync(cmd, fullArgs, { cwd: __dirname, timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
-      if (res && res.stdout) {
-        const info = safeJsonParseFromOutput(res.stdout);
-        const parsed = parseYtdlpInfo(info, cleanUrl);
-        if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
-          if (!parsed.is_video || (parsed.audioUrl && parsed.audioUrl !== parsed.videoUrl) || parsed.hasSeparateAudio) {
+    const runPythonWorker = async () => {
+      try {
+        const pyRes = await execFileAsync(pyBin, [scriptPath, cleanUrl], {
+          cwd: __dirname,
+          timeout: 15000,
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        });
+        if (pyRes && pyRes.stdout) {
+          const parsed = safeJsonParseFromOutput(pyRes.stdout);
+          if (parsed && parsed.success && (parsed.videoUrl || parsed.audioUrl || parsed.thumbnailUrl)) {
             return parsed;
           }
-          if (!fallbackCandidate) fallbackCandidate = parsed;
         }
-      }
-    } catch (err) {
-      console.warn('yt-dlp binary notice:', err.message);
-    }
-  }
+      } catch (e) {}
+      return null;
+    };
 
-  return fallbackCandidate;
+    const runYtdlpBinary = async () => {
+      const ytdlpBin = path.join(__dirname, 'yt-dlp');
+      const commandsToTry = [];
+      if (fs.existsSync(ytdlpBin)) {
+        try { fs.chmodSync(ytdlpBin, 0o755); } catch (e) {}
+        commandsToTry.push({ cmd: ytdlpBin, prefixArgs: [] });
+        commandsToTry.push({ cmd: pyBin, prefixArgs: [ytdlpBin] });
+      }
+      commandsToTry.push({ cmd: 'yt-dlp', prefixArgs: [] });
+      if (process.platform === 'win32') {
+        commandsToTry.push({ cmd: 'yt-dlp.exe', prefixArgs: [] });
+      }
+
+      for (const { cmd, prefixArgs } of commandsToTry) {
+        try {
+          const commonHeaders = [
+            '--extractor-args', 'instagram:app_id=936619743392459',
+            '--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            '--add-header', 'X-IG-App-ID: 936619743392459',
+            '--add-header', 'Accept-Language: en-US,en;q=0.9'
+          ];
+          const fullArgs = [...prefixArgs, '-j', '--no-warnings', '--no-playlist', '--no-check-certificates', '--socket-timeout', '10', ...commonHeaders, cleanUrl];
+          const res = await execFileAsync(cmd, fullArgs, { cwd: __dirname, timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
+          if (res && res.stdout) {
+            const info = safeJsonParseFromOutput(res.stdout);
+            const parsed = parseYtdlpInfo(info, cleanUrl);
+            if (parsed && (parsed.videoUrl || parsed.audioUrl)) {
+              return parsed;
+            }
+          }
+        } catch (e) {}
+      }
+      return null;
+    };
+
+    // Race Tier 1 and Tier 2 simultaneously for minimum response latency
+    const results = await new Promise((resolve) => {
+      let resolved = false;
+      let pending = 2;
+      let candidates = [];
+
+      const handleCandidate = (candidate) => {
+        if (resolved) return;
+        if (candidate && candidate.success && (candidate.videoUrl || candidate.thumbnailUrl)) {
+          // If candidate is complete (audio + video), return immediately!
+          if (!candidate.is_video || candidate.hasSeparateAudio || (candidate.audioUrl && candidate.audioUrl !== candidate.videoUrl)) {
+            resolved = true;
+            return resolve(candidate);
+          }
+          candidates.push(candidate);
+        }
+        pending--;
+        if (pending <= 0) {
+          if (candidates.length > 0) {
+            resolved = true;
+            resolve(candidates[0]);
+          } else {
+            // Fall back to Tier 3 yt-dlp binary
+            runYtdlpBinary().then(bRes => {
+              if (!resolved) {
+                resolved = true;
+                resolve(bRes || (candidates[0] || null));
+              }
+            }).catch(() => {
+              if (!resolved) {
+                resolved = true;
+                resolve(candidates[0] || null);
+              }
+            });
+          }
+        }
+      };
+
+      runDirectNode().then(handleCandidate).catch(() => handleCandidate(null));
+      runPythonWorker().then(handleCandidate).catch(() => handleCandidate(null));
+    });
+
+    return results;
+  })();
+
+  inFlightExtractions.set(cleanUrl, extractionPromise);
+  try {
+    const result = await extractionPromise;
+    return result;
+  } finally {
+    inFlightExtractions.delete(cleanUrl);
+  }
 }
 
 // 1. API: Instagram Media Extraction

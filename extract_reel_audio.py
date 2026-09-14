@@ -109,7 +109,7 @@ def extract_with_ytdlp(url_or_shortcode):
             'noplaylist': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            'socket_timeout': 15,
+            'socket_timeout': 8,
             'extractor_args': {'instagram': {'app_id': ['936619743392459']}}
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
