@@ -39,7 +39,8 @@ const FAQ_ITEMS = [
 
 export default function InstagramDownloader({ 
   activeCategory = 'reel', 
-  setActiveCategory = () => {} 
+  setActiveCategory = () => {},
+  onNavigate = () => {}
 }) {
   const [urlInput, setUrlInput] = useState('');
   const [isFetching, setIsFetching] = useState(false);
@@ -1238,6 +1239,91 @@ export default function InstagramDownloader({
       </section>
 
 
+      {/* FEATURED CREATOR GUIDES & EDITORIAL CONTENT (AdSense Rich Content Section) */}
+      <section className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-10 space-y-6 max-w-4xl mx-auto shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-bold border border-indigo-200 mb-1">
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Creator Knowledge Hub</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 font-['Outfit']">
+              Featured Video Engineering Guides
+            </h2>
+          </div>
+          {onNavigate && (
+            <button
+              onClick={() => onNavigate('guides')}
+              className="text-xs font-bold text-indigo-600 hover:text-indigo-700 inline-flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+            >
+              Browse All Tutorials <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div
+            onClick={() => onNavigate && onNavigate('guide-article', 'instagram-video-formats-bitrate-1080p')}
+            className="p-5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer group space-y-2"
+          >
+            <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider bg-indigo-50 px-2 py-0.5 rounded">
+              Video Production
+            </span>
+            <h3 className="text-sm font-bold text-slate-900 group-hover:text-indigo-600 transition">
+              Instagram Video Formats, Bitrates & 1080p Export Settings (2026)
+            </h3>
+            <p className="text-xs text-slate-500 line-clamp-2">
+              Learn the exact H.264/AAC encoding profiles, bitrates (12-15 Mbps), and settings to avoid server compression.
+            </p>
+          </div>
+
+          <div
+            onClick={() => onNavigate && onNavigate('guide-article', 'fair-use-repurposing-social-media')}
+            className="p-5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:border-purple-300 hover:shadow-md transition-all cursor-pointer group space-y-2"
+          >
+            <span className="text-[10px] font-bold text-purple-600 uppercase tracking-wider bg-purple-50 px-2 py-0.5 rounded">
+              Legal & Copyright
+            </span>
+            <h3 className="text-sm font-bold text-slate-900 group-hover:text-purple-600 transition">
+              Fair Use & Copyright Law for Social Media Creators
+            </h3>
+            <p className="text-xs text-slate-500 line-clamp-2">
+              Transformative commentary guidelines, 4 statutory fair use factors, and avoiding DMCA strikes when remixing.
+            </p>
+          </div>
+
+          <div
+            onClick={() => onNavigate && onNavigate('guide-article', 'extract-high-quality-audio-tracks')}
+            className="p-5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:border-emerald-300 hover:shadow-md transition-all cursor-pointer group space-y-2"
+          >
+            <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider bg-emerald-50 px-2 py-0.5 rounded">
+              Audio Engineering
+            </span>
+            <h3 className="text-sm font-bold text-slate-900 group-hover:text-emerald-600 transition">
+              Extract & Sync High-Fidelity 320kbps Audio Tracks
+            </h3>
+            <p className="text-xs text-slate-500 line-clamp-2">
+              How to isolate dialogue, master to -14 LUFS broadcast standards, and eliminate audio drift on video timelines.
+            </p>
+          </div>
+
+          <div
+            onClick={() => onNavigate && onNavigate('guide-article', 'instagram-aspect-ratios-resolution-cheatsheet')}
+            className="p-5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:border-pink-300 hover:shadow-md transition-all cursor-pointer group space-y-2"
+          >
+            <span className="text-[10px] font-bold text-pink-600 uppercase tracking-wider bg-pink-50 px-2 py-0.5 rounded">
+              Design & Dimensions
+            </span>
+            <h3 className="text-sm font-bold text-slate-900 group-hover:text-pink-600 transition">
+              Instagram Aspect Ratios & Safe Zones Cheatsheet
+            </h3>
+            <p className="text-xs text-slate-500 line-clamp-2">
+              9:16 vertical reels, 1080x1920 resolutions, UI safe zones, and profile 1:1 square thumbnail centering rules.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* FREQUENTLY ASKED QUESTIONS */}
       <section className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-10 space-y-6 max-w-4xl mx-auto shadow-sm">
         <div className="text-center space-y-2">
@@ -1276,29 +1362,6 @@ export default function InstagramDownloader({
           })}
         </div>
       </section>
-
-      {/* GOOGLE ADSENSE COMPLIANCE FOOTER & POLICY INFO */}
-      <footer className="border-t border-slate-200/90 pt-8 pb-12 mt-12 text-center space-y-4 max-w-4xl mx-auto px-4">
-        <div className="flex flex-wrap items-center justify-center gap-6 text-xs font-semibold text-slate-500">
-          <a href="#about" className="hover:text-indigo-600 transition">About Us</a>
-          <span>•</span>
-          <a href="#privacy" className="hover:text-indigo-600 transition">Privacy Policy</a>
-          <span>•</span>
-          <a href="#terms" className="hover:text-indigo-600 transition">Terms of Service</a>
-          <span>•</span>
-          <a href="#dmca" className="hover:text-indigo-600 transition">DMCA Disclaimer</a>
-          <span>•</span>
-          <a href="mailto:support@reelsvault.com" className="hover:text-indigo-600 transition">Contact Us</a>
-        </div>
-
-        <p className="text-[11px] text-slate-400 max-w-2xl mx-auto leading-relaxed">
-          ReelsVault is not affiliated with Instagram, Meta, or Facebook. We do not host any copyrighted videos or media on our servers. All media is delivered directly from Instagram CDN servers.
-        </p>
-
-        <p className="text-[11px] font-medium text-slate-400">
-          © {new Date().getFullYear()} ReelsVault.io — All rights reserved.
-        </p>
-      </footer>
 
     </div>
   );
